@@ -21,8 +21,8 @@ def assign_unique_position_apply(row, position_id_mapping):
             position_id = hier_num = -1
     # multiple positions for one coach
     else:
-        if "head coach" in position_list:
-            position_list.remove("head coach")
+        # if "head coach" in position_list:
+            # position_list.remove("head coach")
         ids = []
         hier_nums = []
         # iterate over each position and find the position ID and hierarchy number
@@ -81,6 +81,8 @@ if __name__ == "__main__":
     for t in unique_teams:
         for y in unique_years:
             season = NFL_record_df[(NFL_record_df.Team == t) & (NFL_record_df.Year == y)]
+            season = season.drop_duplicates(subset=["Name", "final_position"])
+            season.reset_index(drop=True, inplace=True)
             season_hc = season[season.final_position == "HC"]
             if season_hc.shape[0] > 1:
                 print(t, y)
