@@ -50,18 +50,10 @@ def assign_unique_position_apply(row, position_id_mapping):
 if __name__ == "__main__":
     #################################################################
     # Load datasets
-    coach_profile_filename = "../datasets/all_coach_profile.csv"
-    nonNFL_coaching_record_filename = "../datasets/nonNFL_coaching_records.csv"
-    NFL_coach_record_filename = "../datasets/2002-2019_NFL_Coach_Data.csv"
-    playoff_filename = "../datasets/Playoff.csv"
-    total_win_filename = "../datasets/Total_Win.csv"
+    NFL_coach_record_filename = "../datasets/NFL_Coach_Data.csv"
     #################################################################
 
-    coach_profile_df = pd.read_csv(coach_profile_filename)
-    nonNFL_record_df = pd.read_csv(nonNFL_coaching_record_filename)
     NFL_record_df = pd.read_csv(NFL_coach_record_filename)
-    playoff_df = pd.read_csv(playoff_filename)
-    total_win_df = pd.read_csv(total_win_filename)
 
     # Generate the list of positions for each coach
     position_lists = NFL_record_df.Position.str.split("[/;-]")
@@ -87,8 +79,11 @@ if __name__ == "__main__":
             if season_hc.shape[0] > 1:
                 print(t, y)
 
+    # drop duplicates
+    NFL_record_df = NFL_record_df.drop_duplicates(subset=["Name", "Year", "Team", "final_position", "final_hier_num"])
+
     # write to a separate csv file
-    NFL_record_df.to_csv("../datasets/2002-2019_NFL_Coach_Data_final_position.csv", \
+    NFL_record_df.to_csv("../datasets/NFL_Coach_Data_final_position.csv", \
             index=False, encoding="utf-8-sig")
 
 
