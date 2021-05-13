@@ -6,6 +6,7 @@ import random
 import gensim
 import operator
 import argparse
+import collections
 import pandas as pd
 import numpy as np
 import networkx as nx
@@ -64,8 +65,8 @@ def deepwalk(G, walk_length, num_walks, window_size, emb_size, epochs):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-emb_size', '--emb_size', default=False, type=int)
-    parser.add_argument('-window_size', '--window_size', default=False, type=int)
+    parser.add_argument('-emb_size', '--emb_size', default=30, type=int)
+    parser.add_argument('-window_size', '--window_size', default=3, type=int)
 
     args = parser.parse_args()
     emb_size = args.emb_size
@@ -82,6 +83,8 @@ if __name__ == "__main__":
     walk_length = 10
     num_walks = 10
     epochs = 30
+
+    random.seed(100)
 
     #################################################################
     ## Clean NFL and coach records datasets
@@ -139,6 +142,7 @@ if __name__ == "__main__":
     ### Construct the cumulative network by adding one year of NFL record
     ### to the existing network before 2002
     years = range(2002, 2020)
+    # years = range(2002, 2019)
     cumulative_NFL_colleague_G = before2002_colleague_G.copy()
     newly_appeared_coaches = []
     for year in years:
@@ -168,111 +172,4 @@ if __name__ == "__main__":
 
     NFL_all_record = all_coach_record_df[(all_coach_record_df.NFL == 1) & (all_coach_record_df.StartYear >= 2002) & (all_coach_record_df.EndYear <= 2019)]
     NFL_all_record.reset_index(drop=True, inplace=True)
-
-    #################################################################
-    ## Validate the learned embedding
-    #################################################################
-    print("Validating node embedding...")
-    ## - x-axis: N-hops
-    ## - y-axis: the cosine similarity
-    # dictionary that stores the shortest path length between node pairs
-    spl_dict = dict(nx.shortest_path_length(before2002_colleague_G))
-    node_combination = list(combinations(before2002_nodes, 2)) # all combinations of nodes
-    hop_arr = np.zeros((len(node_combination))).astype(int)
-    emb_similarity_arr = np.zeros((len(node_combination)))
-    for idx, comb in enumerate(node_combination):
-        spl = spl_dict[comb[0]][comb[1]]
-        node1_idx = before2002_nodes.index(comb[0])
-        node2_idx = before2002_nodes.index(comb[1])
-
-        node1_emb = before2002_emb[node1_idx,:]
-        node2_emb = before2002_emb[node2_idx,:]
-        cosine_similarity = 1 - distance.cosine(node1_emb, node2_emb)
-
-        # append number of shortest paths and embedding similarity to array
-        hop_arr[idx] = spl
-        emb_similarity_arr[idx] = cosine_similarity
-
-    ### Visualize boxplot of similarity for each shortest path length
-    fig, ax = plt.subplots(figsize=(10,8))
-    hop1_emb_similarity = emb_similarity_arr[np.where(hop_arr == 1)[0]]
-    hop2_emb_similarity = emb_similarity_arr[np.where(hop_arr == 2)[0]]
-    hop3_emb_similarity = emb_similarity_arr[np.where(hop_arr == 3)[0]]
-    hop4_emb_similarity = emb_similarity_arr[np.where(hop_arr == 4)[0]]
-    hop5_emb_similarity = emb_similarity_arr[np.where(hop_arr == 5)[0]]
-    hop6_emb_similarity = emb_similarity_arr[np.where(hop_arr == 6)[0]]
-    hop7_emb_similarity = emb_similarity_arr[np.where(hop_arr == 7)[0]]
-
-    ax.boxplot([hop1_emb_similarity, hop2_emb_similarity, hop3_emb_similarity,\
-            hop4_emb_similarity, hop5_emb_similarity, hop6_emb_similarity,\
-            hop7_emb_similarity])
-    ax.set_xlabel("Shortest path length", fontsize=12)
-    ax.set_ylabel("Embedding cosine similarity", fontsize=12)
-    ax.set_title("Embedding size = {}, window size = {}".format(emb_size, window_size),\
-            fontsize=14)
-
-    plt.tight_layout()
-    plt.savefig("../plots/before2002_node_embedding_validation_embsize{}_windowsize{}.png".format(emb_size, window_size))
-    plt.close()
-
-    fig, ax = plt.subplots(figsize=(10,8))
-    ax.hist(emb_similarity_arr)
-    ax.set_xlabel("Embedding cosine similarity", fontsize=12)
-    ax.set_title("Embedding size = {}, window size = {}".format(emb_size, window_size),\
-            fontsize=14)
-
-    plt.tight_layout()
-    plt.savefig("../plots/before2002_node_embedding_overall_validation_embsize{}_windowsize{}.png".format(emb_size, window_size))
-    plt.close()
-
-
-    spl_dict = dict(nx.shortest_path_length(cumulative_NFL_colleague_G))
-    node_combination = list(combinations(cumulative_NFL_nodes, 2)) # all combinations of nodes
-    hop_arr = np.zeros((len(node_combination))).astype(int)
-    emb_similarity_arr = np.zeros((len(node_combination)))
-    for idx, comb in enumerate(node_combination):
-        spl = spl_dict[comb[0]][comb[1]]
-        node1_idx = cumulative_NFL_nodes.index(comb[0])
-        node2_idx = cumulative_NFL_nodes.index(comb[1])
-
-        node1_emb = cumulative_NFL_emb[node1_idx,:]
-        node2_emb = cumulative_NFL_emb[node2_idx,:]
-        cosine_similarity = 1 - distance.cosine(node1_emb, node2_emb)
-
-        # append number of shortest paths and embedding similarity to array
-        hop_arr[idx] = spl
-        emb_similarity_arr[idx] = cosine_similarity
-
-    # Visualie the embedding similarity distribution by shortest path length
-    fig, ax = plt.subplots(figsize=(10,8))
-    hop1_emb_similarity = emb_similarity_arr[np.where(hop_arr == 1)[0]]
-    hop2_emb_similarity = emb_similarity_arr[np.where(hop_arr == 2)[0]]
-    hop3_emb_similarity = emb_similarity_arr[np.where(hop_arr == 3)[0]]
-    hop4_emb_similarity = emb_similarity_arr[np.where(hop_arr == 4)[0]]
-    hop5_emb_similarity = emb_similarity_arr[np.where(hop_arr == 5)[0]]
-    hop6_emb_similarity = emb_similarity_arr[np.where(hop_arr == 6)[0]]
-    hop7_emb_similarity = emb_similarity_arr[np.where(hop_arr == 7)[0]]
-
-    ax.boxplot([hop1_emb_similarity, hop2_emb_similarity, hop3_emb_similarity,\
-            hop4_emb_similarity, hop5_emb_similarity, hop6_emb_similarity,\
-            hop7_emb_similarity])
-    ax.set_xlabel("Shortest path length", fontsize=12)
-    ax.set_ylabel("Embedding cosine similarity", fontsize=12)
-    ax.set_title("Embedding size = {}, window size = {}".format(emb_size, window_size),\
-            fontsize=14)
-
-    plt.tight_layout()
-    plt.savefig("../plots/before2019_node_embedding_validation_embsize{}_windowsize{}.png".format(emb_size, window_size))
-    plt.close()
-
-    # Visualize the distribution of overall pairwise embedding similarity
-    fig, ax = plt.subplots(figsize=(10,8))
-    ax.hist(emb_similarity_arr)
-    ax.set_xlabel("Embedding cosine similarity", fontsize=12)
-    ax.set_title("Embedding size = {}, window size = {}".format(emb_size, window_size),\
-            fontsize=14)
-
-    plt.tight_layout()
-    plt.savefig("../plots/before2019_node_embedding_overall_validation_embsize{}_windowsize{}.png".format(emb_size, window_size))
-    plt.close()
 

@@ -16,7 +16,7 @@ class HierGATLayer(nn.Module):
         self.dropout = dropout
 
         # fully connected layer - W
-        self.fc = nn.Linear(in_dim, emb_dim, bias=True)
+        self.fc = nn.Linear(in_dim, emb_dim, bias=False)
 
         self.attn_fc = nn.Linear(2 * emb_dim, 1, bias=True)
         # attention layer - between coordinators and position coaches
@@ -32,12 +32,14 @@ class HierGATLayer(nn.Module):
         self.reset_parameters()
 
         # dropout layer
-        self.dropout = nn.Dropout(0.2)
+        self.dropout = nn.Dropout(0.3)
 
     def reset_parameters(self):
         gain = nn.init.calculate_gain('relu')
         nn.init.xavier_normal_(self.fc.weight, gain=gain)
         nn.init.xavier_normal_(self.attn_fc.weight, gain=gain)
+        # nn.init.xavier_normal_(self.attn_fc1.weight, gain=gain)
+        # nn.init.xavier_normal_(self.attn_fc2.weight, gain=gain)
         # nn.init.xavier_normal_(self.output_fc1.weight, gain=gain)
         nn.init.xavier_normal_(self.output_fc2.weight, gain=gain)
 
@@ -50,6 +52,13 @@ class HierGATLayer(nn.Module):
         coord_to_position = edgelist[edgelist.source.isin(coord_ids)]
         coord_to_position.reset_index(drop=True, inplace=True)
 
+        # assign z of source and target
+        source_z = coord_to_position.source.apply(lambda x: g.nodes[x]["z"])
+        target_z = coord_to_position.target.apply(lambda x: g.nodes[x]["z"])
+
+        coord_to_position = coord_to_position.assign(source_z = source_z)
+        coord_to_position = coord_to_position.assign(target_z = target_z)
+        
         return coord_to_position
 
     def generate_hc_coord_edgelist(self, g):
@@ -59,38 +68,46 @@ class HierGATLayer(nn.Module):
         hc_to_coord = edgelist[edgelist.source.isin(hc_ids)]
         hc_to_coord.reset_index(drop=True, inplace=True)
 
+        # assign z of source and target
+        source_z = hc_to_coord.source.apply(lambda x: g.nodes[x]["z"])
+        target_z = hc_to_coord.target.apply(lambda x: g.nodes[x]["z"])
+
+        hc_to_coord = hc_to_coord.assign(source_z = source_z)
+        hc_to_coord = hc_to_coord.assign(target_z = target_z)
+
         return hc_to_coord
 
-    def compute_attn_coef(self, g, sub_edgelist, edge_type):
+    def compute_e_func(self, row):
+        source_z = row.source_z
+        target_z = row.target_z
+
+        z2 = torch.cat([source_z, target_z], dim=0)
+        e = self.dropout(F.leaky_relu(self.attn_fc(z2)))
+        # if edge_type == "coord_position":
+            # e = self.dropout(F.leaky_relu(self.attn_fc1(z2)))
+        # elif edge_type == "hc_coord":
+            # e = self.dropout(F.leaky_relu(self.attn_fc2(z2)))
+
+        return e[0]
+
+    def compute_attn_coef(self, g, sub_edgelist):
         
         # get the list of coord->position edges
         sub_edges = list(zip(sub_edgelist.source, sub_edgelist.target))
         # tensor to store the attention coefficient for each coord->position edge
-        e_tensor = torch.zeros((sub_edgelist.shape[0], 1))
-        for idx, edge in enumerate(sub_edges):
-            source = edge[0]
-            target = edge[1]
-            source_z = g.nodes[source]["z"]
-            target_z = g.nodes[target]["z"]
 
-            z2 = torch.cat([source_z, target_z], dim=0)
-            e = self.dropout(F.leaky_relu(self.attn_fc(z2)))
-            # if edge_type == "coord_position":
-                # e = self.dropout(F.leaky_relu(self.attn_fc1(z2)))
-            # elif edge_type == "hc_coord":
-                # e = self.dropout(F.leaky_relu(self.attn_fc2(z2)))
+        sub_edgelist_e = sub_edgelist.apply(self.compute_e_func, axis=1)
+        sub_edgelist = sub_edgelist.assign(e=sub_edgelist_e)
+        e_tensor = torch.Tensor(sub_edgelist_e).view(sub_edgelist_e.shape[0], 1)
 
-            # assign the e values for coord -> position edges
-            g.edges[source, target]['e'] = e
-            e_tensor[idx] = e
-
+        # assign e to edge attributes
+        nx.set_edge_attributes(g, name="e", values=dict(zip(sub_edges, e_tensor)))
         
         # softmax of the attention coefficient
         # group the coord->position edges by sources
-        sources = sub_edgelist.source.unique()
-        alpha = torch.zeros((e_tensor.shape[0], e_tensor.shape[1]))
-        for source in sources:
-            group = sub_edgelist[sub_edgelist.source==source]
+        groups = sub_edgelist.groupby('source')
+        alpha = torch.zeros((e_tensor.shape[0], 1))
+        for source, group in groups:
             edge_attn_coef = e_tensor[group.index,:]
             softmax_edge_attn_coef = F.softmax(edge_attn_coef, dim=0)
             alpha[group.index,:] = softmax_edge_attn_coef
@@ -129,14 +146,15 @@ class HierGATLayer(nn.Module):
             z = self.dropout(F.relu(self.fc(f)))
         else:
             z = F.relu(self.fc(f))
+
         nx.set_node_attributes(g, name="z", values=dict(zip(g.nodes(), z)))
 
         coord_to_position_edgelist = self.generate_coord_position_edgelist(g)
-        g, coord_to_position = self.compute_attn_coef(g, coord_to_position_edgelist, "coord_position")
+        g, coord_to_position = self.compute_attn_coef(g, coord_to_position_edgelist)
         g = self.aggregate_neighbors(g, coord_to_position)
 
         hc_to_coord_edgelist = self.generate_hc_coord_edgelist(g)
-        g, hc_to_coord = self.compute_attn_coef(g, hc_to_coord_edgelist, "hc_coord")
+        g, hc_to_coord = self.compute_attn_coef(g, hc_to_coord_edgelist)
         g = self.aggregate_neighbors(g, hc_to_coord)
 
         g, team_emb = self.team_embedding(g)

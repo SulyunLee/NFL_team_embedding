@@ -129,6 +129,7 @@ if __name__ == "__main__":
     # and yearly embedding at year t-1
     cumul_emb_columns = cumulative_node_embedding_df.columns[cumulative_node_embedding_df.columns.str.contains("cumul_emb")].tolist()
     coach_emb_features = np.zeros((NFL_coach_instances.shape[0], len(cumul_emb_columns)))
+    no_node_emb_arr = np.zeros((NFL_coach_instances.shape[0])).astype(int) # if there is no node embedding for the corresponding coach
     for idx, row in NFL_coach_instances.iterrows():
         year = row.Year
         name = row.Name
@@ -138,10 +139,30 @@ if __name__ == "__main__":
 
         if cumulative_emb.shape[0] != 0:
             coach_emb_features[idx,:] = cumulative_emb
+        else:
+            no_node_emb_arr[idx] = 1
 
     NFL_coach_instances = pd.concat([NFL_coach_instances, pd.DataFrame(coach_emb_features,\
             index=NFL_coach_instances.index, columns=cumul_emb_columns)], axis=1)
 
-    NFL_coach_instances.to_csv("../datasets/NFL_Coach_Data_with_features.csv",\
-            index=False, encoding="utf-8-sig")
+    NFL_coach_instances = NFL_coach_instances.assign(no_node_emb=no_node_emb_arr)
+
+    # check nodes with no embedding learned from Deepwalk on cumulative network until previous years.
+    for hier_num in range(1, 4):
+        print("Hier_num: {}".format(hier_num))
+        for year in range(2002, 2020):
+            num_no_emb = NFL_coach_instances[(NFL_coach_instances.final_hier_num==hier_num) & (NFL_coach_instances.Year==year)].no_node_emb.sum()
+            print(num_no_emb)
+
+    no_node_emb_instances = NFL_coach_instances[NFL_coach_instances.no_node_emb==1]
+    no_node_emb_instances.reset_index(drop=True, inplace=True)
+    cnt=0
+    for idx, coach in no_node_emb_instances.iterrows():
+        year = coach.Year
+        college_coaching_record = all_record_df[(all_record_df.StartYear<year) & (all_record_df.Name==coach.Name)]
+        if college_coaching_record.shape[0] != 0:
+            count += 1
+
+    # NFL_coach_instances.to_csv("../datasets/NFL_Coach_Data_with_features.csv",\
+            # index=False, encoding="utf-8-sig")
     

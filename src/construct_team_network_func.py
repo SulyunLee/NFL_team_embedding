@@ -5,7 +5,6 @@ import networkx as nx
 import itertools
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-import torch as th
 
 def construct_seasonal_mentorship_network(df, year, team):
     '''
