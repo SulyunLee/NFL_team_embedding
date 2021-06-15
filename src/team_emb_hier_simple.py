@@ -1,18 +1,12 @@
 '''
-This script generates team embedding of a team network using the baseline model.
-The baseline model does not consider the hierarchical structure of a team, but simply
-aggregates the team members' features.
-The following classifiers are used:
-    1) Random forest
-    2) SVM
-    3) MLP (team_emb_baseline_mlp.py)
+This script generates the team embeddings of NFL season network using hierarchical approach. The hierarchical approach takes the simplest form of aggregating coach features in each hierarchy.
 '''
+
 import pandas as pd
 import numpy as np
 import statistics
 import argparse
 import tqdm
-import sklearn
 from tqdm import tqdm
 from generate_team_features_func import *
 from aggregate_team_embedding_func import *
@@ -73,6 +67,7 @@ if __name__ == "__main__":
     train_split_year = 2015
     valid_split_year = 2017
 
+    # Train
     train_record = NFL_record_df[(NFL_record_df.Year >= 2002) & (NFL_record_df.Year <= train_split_year)]
     train_record.reset_index(drop=True, inplace=True)
 
@@ -101,32 +96,26 @@ if __name__ == "__main__":
 
     test_labels = team_labels_df[(team_labels_df.Year > valid_split_year) & (team_labels_df.Year <= 2019)]
     test_labels.reset_index(drop=True, inplace=True)
-
     print("Number of training records: {}, validation records: {}, testing records: {}".format(train_record.shape[0], valid_record.shape[0], test_record.shape[0]))
 
-
-
-    #########################################################
-    ## Generate team embeddings...
-    #########################################################
     print("Generating team embedding, team_features, and labels...")
-    # aggregate coaches' features in the same team (avg).
     print("Train")
-    train_team_emb, train_team_feature, train_labels = simple_aggregate_features(train_record, train_team_features, train_labels, coach_feature_names, team_feature_names, "failure")
+    train_team_emb, train_team_feature, train_labels = hierarchical_average_features(train_record, train_team_features, train_labels, coach_feature_names, team_feature_names, "failure")
     print("Validation")
-    valid_team_emb, valid_team_feature, valid_labels = simple_aggregate_features(valid_record, valid_team_features, valid_labels, coach_feature_names, team_feature_names, "failure")
+    valid_team_emb, valid_team_feature, valid_labels = hierarchical_average_features(valid_record, valid_team_features, valid_labels, coach_feature_names, team_feature_names, "failure")
     print("Test")
-    test_team_emb, test_team_feature, test_labels = simple_aggregate_features(test_record, test_team_features, test_labels, coach_feature_names, team_feature_names, "failure")
+    test_team_emb, test_team_feature, test_labels = hierarchical_average_features(test_record, test_team_features, test_labels, coach_feature_names, team_feature_names, "failure")
 
-    # combine aggregated features and team features
+    # concatenage team features to team embedding
     train_x = np.concatenate((train_team_emb, train_team_feature), axis=1)
     valid_x = np.concatenate((valid_team_emb, valid_team_feature), axis=1)
     test_x = np.concatenate((test_team_emb, test_team_feature), axis=1)
-
-    ## Random Forest Classifier
+    
+    ## Predict using classifiers
+    # Random forst
     rf_auc_dict = random_forest([1,2,3], train_x, train_labels, valid_x, valid_labels,\
             test_x, test_labels)
 
     ## Support vector machines
-    svm_auc_dict = svm([1/16, 1/8, 1/4, 1/2, 1, 2, 4, 8, 16], train_x, train_labels, \
+    svm_auc_dict = svm([1/16, 1/8, 1/4, 1/2, 1, 2, 4, 8, 16, 32], train_x, train_labels, \
             valid_x, valid_labels, test_x, test_labels)

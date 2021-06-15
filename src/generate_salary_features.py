@@ -3,6 +3,9 @@ import pandas as pd
 import numpy as np
 
 if __name__ == "__main__":
+
+
+    ### Generate salary features
     # Load datasets
     team_salary_filename = "../datasets/Total_Salary.csv"
     team_salary_df = pd.read_csv(team_salary_filename)
@@ -22,3 +25,5 @@ if __name__ == "__main__":
     team_salary_df.to_csv(team_salary_filename, index=False, encoding="utf-8-sig")
 
 
+    
+    

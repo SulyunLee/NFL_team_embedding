@@ -1,3 +1,4 @@
+
 import copy
 import pandas as pd
 import numpy as np
@@ -11,10 +12,11 @@ from tqdm import tqdm
 from sklearn.metrics import roc_auc_score
 from generate_team_features_func import *
 from construct_team_network_func import *
-from hier_gat import *
+from attn_aggregation import *
 from utils import *
 
 def prepare_features_labels(team_G, coach_features_df, team_labels_df, team_features_df, coach_feature_names, team_feature_names, label_name):
+
     coach_features = torch.zeros((coach_features_df.shape[0], len(coach_feature_names)))
     team_labels = torch.zeros((team_labels_df.shape[0], 1))
     team_features = torch.zeros((team_features_df.shape[0], len(team_feature_names)))
@@ -33,17 +35,14 @@ def prepare_features_labels(team_G, coach_features_df, team_labels_df, team_feat
             year = team_G.nodes[node]["Year"]
             team = team_G.nodes[node]["Team"]
             label = team_labels_df[(team_labels_df.Year==year) & (team_labels_df.Team==team.replace(" (NFL)", ""))].failure
-            # team_labels[team_idx] = int(label)
             team_labels_dict[(year, team)] = int(label)
 
             # insert team features
             team_feature = team_features_df[(team_features_df.Year == year) & (team_features_df.Team==team)][team_feature_names]
-            # team_features[team_idx,:] = torch.Tensor(team_feature.values)
             team_features_dict[(year, team)] = torch.Tensor(team_feature.values)
-            
+
             team_idx += 1
 
-    # return team_G, coach_features, team_labels, team_features
     return team_G, coach_features, team_labels_dict, team_features_dict
 
 if __name__ == "__main__":
@@ -51,7 +50,6 @@ if __name__ == "__main__":
     parser.add_argument('-collab', '--collab', default=False, type=bool, help="if the coach previous collaborations (node embedding) should be considered as the features")
     parser.add_argument('-diversity', '--diversity', default=False, type=bool)
     parser.add_argument('-emb_dim', '--emb_dim', type=int)
-    parser.add_argument('-num_heads', '--num_heads', default=1, type=int)
     parser.add_argument('-repeats', '--repeats', default=1, type=int)
     parser.add_argument('-seed', '--seed', default=1, type=int)
 
@@ -59,7 +57,6 @@ if __name__ == "__main__":
     collab = args.collab
     diversity = args.diversity
     emb_dim = args.emb_dim
-    num_heads = args.num_heads
     repeats = args.repeats
     seed = args.seed
 
@@ -83,7 +80,6 @@ if __name__ == "__main__":
 
     # Define column names to be used as coach features
     basic_features = ["TotalYearsInNFL", "Past5yrsWinningPerc_best", "Past5yrsWinningPerc_avg"]
-    # basic_features = ["TotalYearsInNFL", "Past5yrsWinningPerc_best", "Past5yrsWinningPerc_avg", "HC", "Coord"]
     cumul_emb_features = NFL_record_df.columns[NFL_record_df.columns.str.contains("cumul_emb")].tolist()
 
     if collab == True:
@@ -105,10 +101,8 @@ if __name__ == "__main__":
         team_features = team_salary_df
         team_feature_names = ["Salary_Rank"]
 
-
-
     #################################################################
-    ### Construct team network using all seasons.
+    ## Construct team network
     #################################################################
     # Separate train and test datasets
     # Train
@@ -153,29 +147,23 @@ if __name__ == "__main__":
     test_record.reset_index(inplace=True)
     test_record = test_record.rename(columns={'index':'ID'})
 
-    # Nodes are each coach record
-    # Edges are directed edges from high to lower hierarchy.
+    # Construct fully connected network of coaches in the same team
+    # No hierarchical. No direction
     print("** Constructing train team network... **")
-    train_id_record_dict, train_team_G = construct_fullseason_mentorship_network(train_record)
+    train_team_G = construct_seasonal_colleague_network(train_record, 2002, 2015)
     print(nx.info(train_team_G))
-    train_components = nx.weakly_connected_components(train_team_G)
-    num_train_components = len(list(train_components))
+    num_train_components = nx.number_strongly_connected_components(train_team_G)
     print("The number of train teams (components): {}".format(num_train_components))
 
-    print("** Constructing validation team network... **")
-    valid_id_record_dict, valid_team_G = construct_fullseason_mentorship_network(valid_record)
+    valid_team_G = construct_seasonal_colleague_network(valid_record, 2016, 2017)
     print(nx.info(valid_team_G))
-    valid_components = nx.weakly_connected_components(valid_team_G)
-    num_valid_components = len(list(valid_components))
+    num_valid_components = nx.number_strongly_connected_components(valid_team_G)
     print("The number of valid teams (components): {}".format(num_valid_components))
 
-    print("** Constructing test team network... **")
-    test_id_record_dict, test_team_G = construct_fullseason_mentorship_network(test_record)
+    test_team_G = construct_seasonal_colleague_network(test_record, 2018, 2019)
     print(nx.info(test_team_G))
-    test_components = nx.weakly_connected_components(test_team_G)
-    num_test_components = len(list(test_components))
+    num_test_components = nx.number_strongly_connected_components(test_team_G)
     print("The number of test teams (components): {}".format(num_test_components))
-
 
     #################################################################
     ### Construct features, labels, and salary tensors according to
@@ -190,9 +178,9 @@ if __name__ == "__main__":
     valid_feature_extracted = np.array(valid_record[coach_feature_names])
     test_feature_extracted = np.array(test_record[coach_feature_names])
 
-
     print("Normalizing coach features...")
     normalize_features = coach_feature_names
+
     train_normalized_feature_extracted = np.array(train_record[normalize_features])
     valid_normalized_feature_extracted = np.array(valid_record[normalize_features])
     test_normalized_feature_extracted = np.array(test_record[normalize_features])
@@ -227,7 +215,7 @@ if __name__ == "__main__":
 
     # generate features, labels, and salary vectors for training set
     # in the same order of the train team graph
-    train_team_G, normalized_train_f, train_team_labels_dict, train_team_features_dict= prepare_features_labels(train_team_G, train_record, train_labels, train_team_features, coach_feature_names, team_feature_names, "failure")
+    train_team_G, normalized_train_f, train_team_labels_dict, train_team_features_dict = prepare_features_labels(train_team_G, train_record, train_labels, train_team_features, coach_feature_names, team_feature_names, "failure")
 
     # generate features, labels, and salary vectors for valid set
     # in the same order of the valid team graph
@@ -241,7 +229,7 @@ if __name__ == "__main__":
     ### Hierarchical team embedding using attention mechanism.
     ########################################################
     print("Training model...")
-    loss = nn.BCEWithLogitsLoss() # includes sigmoid layer
+    loss = nn.BCEWithLogitsLoss()
     epochs = 3000
 
     patience = 7
@@ -265,21 +253,21 @@ if __name__ == "__main__":
                                 "valid": {"loss":[], "accuracy": [], "auc":[]},\
                                 "test": {"loss":[], "accuracy": [], "auc":[]}}
         for repeat in range(repeats):
-            model = HierGATTeamEmb(in_dim=normalized_train_f.shape[1],
-                    emb_dim=emb_dim, num_heads=num_heads, 
-                    num_team_features=len(team_feature_names),
-                    merge="cat")
+            model = AttnAggLayer(in_dim=normalized_train_f.shape[1],
+                                emb_dim=emb_dim,
+                                num_team_features=len(team_feature_names))
+
             # create optimizer
             optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
             # Early stopping
-            stopper = EarlyStopping(patience=30)
+            stopper = EarlyStopping(patience=100)
             for epoch in tqdm(range(epochs)):
                 print("Epoch {}".format(epoch))
                 model.train()
 
                 optimizer.zero_grad()
-                
-                train_y_hat, train_labels = model(train_team_G, normalized_train_f, train_team_features_dict, train_team_labels_dict)
+
+                train_g, train_y_hat, train_labels = model(train_team_G, normalized_train_f, train_team_features_dict, train_team_labels_dict, num_train_components)
                 train_loss = loss(train_y_hat, train_labels)
                 train_loss_arr[epoch] = train_loss
 
@@ -298,7 +286,7 @@ if __name__ == "__main__":
                     model.eval()
 
                     # predict on the valid set
-                    valid_y_hat, valid_labels = model(valid_team_G, normalized_valid_f, valid_team_features_dict, valid_team_labels_dict)
+                    valid_g, valid_y_hat, valid_labels = model(valid_team_G, normalized_valid_f, valid_team_features_dict, valid_team_labels_dict, num_valid_components)
                     valid_loss = loss(valid_y_hat, valid_labels)
                     valid_loss_arr[epoch] = valid_loss
 
@@ -310,7 +298,7 @@ if __name__ == "__main__":
                     valid_auc_arr[epoch] = valid_auc
                     
                     # predict on the test set
-                    test_y_hat, test_labels = model(test_team_G, normalized_test_f, test_team_features_dict, test_team_labels_dict)
+                    test_g, test_y_hat, test_labels = model(test_team_G, normalized_test_f, test_team_features_dict, test_team_labels_dict, num_test_components)
                     test_loss = loss(test_y_hat, test_labels)
                     test_loss_arr[epoch] = test_loss
 
@@ -322,8 +310,8 @@ if __name__ == "__main__":
                     test_auc_arr[epoch] = test_auc
 
                     print("Train Loss: {:.3f}, auc: {:.3f}\nValid Loss: {:.3f}, auc: {:.3f}\nTest Loss: {:.3f}, auc: {:.3f}".format(train_loss,train_auc, valid_loss, valid_auc, test_loss, test_auc))
+
                 # if (epoch > patience and np.argmin(valid_loss_arr[epoch-patience:epoch]) == 0) or (epoch == epochs-1):
-                    # break
                 if stopper.step(valid_loss, model):
                     break
 
@@ -351,9 +339,6 @@ if __name__ == "__main__":
         auc_dict["valid"].append(avg_valid_auc)
         auc_dict["test"].append(avg_test_auc)
 
-        torch.save(model.state_dict(), "pytorch_models/team_emb_hierattn_collab{}_diversity{}_tesize{}_multihead{}_seed{}_checkpoint.pth".format(collab, diversity, emb_dim, num_heads, seed))
 
-        # Save losses, accuracies, and AUCs
-        np.savez("temp_data/losses_team_emb_hierattn_collab{}_diversity{}_tesize{}_multihead{}_seed{}.npz".format(collab, diversity, emb_dim, num_heads, seed), train_loss=train_loss_arr, valid_loss=valid_loss_arr, test_loss=test_loss_arr)
-        np.savez("temp_data/auc_team_emb_hierattn_collab{}_diversity{}_tesize{}_multihead{}_seed{}.npz".format(collab, diversity, emb_dim, num_heads, seed), train_auc=train_auc_arr, valid_auc=valid_auc_arr, test_auc=test_auc_arr)
+
 

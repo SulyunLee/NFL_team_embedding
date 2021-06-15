@@ -1,18 +1,11 @@
-'''
-This script generates team embedding of a team network using the baseline model.
-The baseline model does not consider the hierarchical structure of a team, but simply
-aggregates the team members' features.
-The following classifiers are used:
-    1) Random forest
-    2) SVM
-    3) MLP (team_emb_baseline_mlp.py)
-'''
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import pandas as pd
 import numpy as np
-import statistics
 import argparse
-import tqdm
-import sklearn
+import statistics
 from tqdm import tqdm
 from generate_team_features_func import *
 from aggregate_team_embedding_func import *
@@ -47,7 +40,6 @@ if __name__ == "__main__":
     basic_features = ["TotalYearsInNFL", "Past5yrsWinningPerc_best", "Past5yrsWinningPerc_avg"]
     cumul_emb_features = NFL_record_df.columns[NFL_record_df.columns.str.contains("cumul_emb")].tolist()
 
-    # adding feature vectors as the node attributes in entire_team_G
     if collab == True:
         coach_feature_names = basic_features + cumul_emb_features
     else:
@@ -67,9 +59,7 @@ if __name__ == "__main__":
         team_features = team_salary_df
         team_feature_names = ["Salary_Rank"]
 
-    #########################################################
-    ### Split coach record, salary, and label into train, validation, and test set
-    #########################################################
+    # split coach record, salary, and label into train, validation, test set
     train_split_year = 2015
     valid_split_year = 2017
 
@@ -104,29 +94,43 @@ if __name__ == "__main__":
 
     print("Number of training records: {}, validation records: {}, testing records: {}".format(train_record.shape[0], valid_record.shape[0], test_record.shape[0]))
 
-
-
     #########################################################
     ## Generate team embeddings...
     #########################################################
-    print("Generating team embedding, team_features, and labels...")
-    # aggregate coaches' features in the same team (avg).
+    print("Generating team embedding, salary, and labels...")
     print("Train")
-    train_team_emb, train_team_feature, train_labels = simple_aggregate_features(train_record, train_team_features, train_labels, coach_feature_names, team_feature_names, "failure")
+    train_team_emb, train_team_feature, train_labels = hierarchical_average_features(train_record, train_team_features, train_labels, coach_feature_names, team_feature_names, "failure")
     print("Validation")
-    valid_team_emb, valid_team_feature, valid_labels = simple_aggregate_features(valid_record, valid_team_features, valid_labels, coach_feature_names, team_feature_names, "failure")
+    valid_team_emb, valid_team_feature, valid_labels = hierarchical_average_features(valid_record, valid_team_features, valid_labels, coach_feature_names, team_feature_names, "failure")
     print("Test")
-    test_team_emb, test_team_feature, test_labels = simple_aggregate_features(test_record, test_team_features, test_labels, coach_feature_names, team_feature_names, "failure")
+    test_team_emb, test_team_feature, test_labels = hierarchical_average_features(test_record, test_team_features, test_labels, coach_feature_names, team_feature_names, "failure")
 
-    # combine aggregated features and team features
+    # concatenage team features to team embedding
     train_x = np.concatenate((train_team_emb, train_team_feature), axis=1)
     valid_x = np.concatenate((valid_team_emb, valid_team_feature), axis=1)
     test_x = np.concatenate((test_team_emb, test_team_feature), axis=1)
 
-    ## Random Forest Classifier
-    rf_auc_dict = random_forest([1,2,3], train_x, train_labels, valid_x, valid_labels,\
-            test_x, test_labels)
+    
+    ## MLP
+    print("*** MLP: ")
 
-    ## Support vector machines
-    svm_auc_dict = svm([1/16, 1/8, 1/4, 1/2, 1, 2, 4, 8, 16], train_x, train_labels, \
-            valid_x, valid_labels, test_x, test_labels)
+    # normalize
+    combined_x = np.zeros((train_x.shape[0] + valid_x.shape[0] + test_x.shape[0], train_x.shape[1]))
+    combined_x[:train_x.shape[0]] = train_x
+    combined_x[train_x.shape[0]:train_x.shape[0]+valid_x.shape[0],:] = valid_x
+    combined_x[train_x.shape[0]+valid_x.shape[0]:,:] = test_x
+
+    means = combined_x.mean(axis=0)
+    stds = combined_x.std(axis=0)
+
+    normalized_train_x = torch.Tensor((train_x - means) / stds)
+    normalized_valid_x = torch.Tensor((valid_x - means) / stds)
+    normalized_test_x = torch.Tensor((test_x - means) / stds)
+
+    train_labels = torch.Tensor(train_labels)
+    valid_labels = torch.Tensor(valid_labels)
+    test_labels = torch.Tensor(test_labels)
+
+    hidden_nodes = [2, 4, 8, 16, 32]
+    mlp_auc_dict = mlp(hidden_nodes, normalized_train_x, train_labels, normalized_valid_x, valid_labels, normalized_test_x, test_labels)
+

@@ -7,166 +7,156 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import networkx as nx
+import time
 
 class HierGATLayer(nn.Module):
-    def __init__(self, in_dim, emb_dim, dropout):
+    def __init__(self, in_dim, emb_dim, num_team_features):
         super(HierGATLayer, self).__init__()
         self.in_dim = in_dim
         self.emb_dim = emb_dim
-        self.dropout = dropout
+        self.num_team_features = num_team_features
 
         # fully connected layer - W
         self.fc = nn.Linear(in_dim, emb_dim, bias=False)
-
-        self.attn_fc = nn.Linear(2 * emb_dim, 1, bias=True)
         # attention layer - between coordinators and position coaches
-        # self.attn_fc1 = nn.Linear(2 * emb_dim, 1, bias=False)
+        self.attn_fc1 = nn.Linear(2 * emb_dim, 1, bias=False)
         # attention layer - between hc and coordinators
-        # self.attn_fc2 = nn.Linear(2 * emb_dim, 1, bias=False)
+        self.attn_fc2 = nn.Linear(2 * emb_dim, 1, bias=False)
+        # attention layer - between position coaches and position coaches
+        self.attn_fc3 = nn.Linear(2 * emb_dim, 1, bias=False)
 
         # fully connected layer at output level
-        # self.output_fc1 = nn.Linear(emb_dim+1, int(emb_dim/2), bias=True)
-        # self.output_fc2 = nn.Linear(int(emb_dim/2), 2, bias=True)
-        self.output_fc2 = nn.Linear(emb_dim+1, 2, bias=True)
+        self.output_fc2 = nn.Linear(emb_dim + num_team_features, 1, bias=True)
 
         self.reset_parameters()
 
         # dropout layer
-        self.dropout = nn.Dropout(0.3)
+        self.dropout = nn.Dropout(0.6)
 
     def reset_parameters(self):
         gain = nn.init.calculate_gain('relu')
         nn.init.xavier_normal_(self.fc.weight, gain=gain)
-        nn.init.xavier_normal_(self.attn_fc.weight, gain=gain)
-        # nn.init.xavier_normal_(self.attn_fc1.weight, gain=gain)
-        # nn.init.xavier_normal_(self.attn_fc2.weight, gain=gain)
-        # nn.init.xavier_normal_(self.output_fc1.weight, gain=gain)
+        # nn.init.xavier_normal_(self.attn_fc.weight, gain=gain)
+        nn.init.xavier_normal_(self.attn_fc1.weight, gain=gain)
+        nn.init.xavier_normal_(self.attn_fc2.weight, gain=gain)
+        nn.init.xavier_normal_(self.attn_fc3.weight, gain=gain)
+
         nn.init.xavier_normal_(self.output_fc2.weight, gain=gain)
 
-    def generate_coord_position_edgelist(self, g):
-        # define the nodes with coordinator positions
-        coord_ids = [k for k in g.nodes() if g.nodes[k]["final_position"] in ["OC", "SC", "DC"]]
+    def generate_outedge_edgelist(self, g, edgelist, source):
+        sub_edgelist = edgelist[edgelist.source == source]
+        sub_edgelist.reset_index(drop=True, inplace=True)
+        source_z = sub_edgelist.source.apply(lambda x: g.nodes[x]["z"])
+        target_z = sub_edgelist.target.apply(lambda x: g.nodes[x]["z"])
 
-        # extract edgelist of coordinators -> position coaches
-        edgelist = nx.to_pandas_edgelist(g)
-        coord_to_position = edgelist[edgelist.source.isin(coord_ids)]
-        coord_to_position.reset_index(drop=True, inplace=True)
+        sub_edgelist = sub_edgelist.assign(source_z = source_z)
+        sub_edgelist = sub_edgelist.assign(target_z = target_z)
 
-        # assign z of source and target
-        source_z = coord_to_position.source.apply(lambda x: g.nodes[x]["z"])
-        target_z = coord_to_position.target.apply(lambda x: g.nodes[x]["z"])
+        return sub_edgelist
 
-        coord_to_position = coord_to_position.assign(source_z = source_z)
-        coord_to_position = coord_to_position.assign(target_z = target_z)
-        
-        return coord_to_position
+    def compute_attn_coef(self, edgelist, edge_type):
+        source_z_stacked = torch.stack(edgelist.source_z.tolist())
+        target_z_stacked = torch.stack(edgelist.target_z.tolist())
+        z2 = torch.cat([source_z_stacked, target_z_stacked], dim=1)
+        if edge_type == "coord_pos":
+            e = F.leaky_relu(self.attn_fc1(z2))
+        elif edge_type == "hc_coord":
+            e = F.leaky_relu(self.attn_fc2(z2))
+        elif edge_type == "pos_pos":
+            e = F.leaky_relu(self.attn_fc3(z2))
+        # compute alpha - softmax of e
+        alpha = self.dropout(F.softmax(e, dim=0))
 
-    def generate_hc_coord_edgelist(self, g):
-        hc_ids = [k for k in g.nodes() if g.nodes[k]["final_position"] == "HC"]
-        # extract edgelist of head coach -> coordinator
-        edgelist = nx.to_pandas_edgelist(g)
-        hc_to_coord = edgelist[edgelist.source.isin(hc_ids)]
-        hc_to_coord.reset_index(drop=True, inplace=True)
+        return alpha
 
-        # assign z of source and target
-        source_z = hc_to_coord.source.apply(lambda x: g.nodes[x]["z"])
-        target_z = hc_to_coord.target.apply(lambda x: g.nodes[x]["z"])
+    def aggregate_neighbors(self, edgelist, edge_type):
+        alpha = self.compute_attn_coef(edgelist, edge_type)
+        attn_neighbor_z = torch.mul(torch.stack(edgelist.target_z.tolist()), alpha)
+        aggregated_neighbors = attn_neighbor_z.sum(dim=0)
 
-        hc_to_coord = hc_to_coord.assign(source_z = source_z)
-        hc_to_coord = hc_to_coord.assign(target_z = target_z)
+        return aggregated_neighbors
 
-        return hc_to_coord
-
-    def compute_e_func(self, row):
-        source_z = row.source_z
-        target_z = row.target_z
-
-        z2 = torch.cat([source_z, target_z], dim=0)
-        e = self.dropout(F.leaky_relu(self.attn_fc(z2)))
-        # if edge_type == "coord_position":
-            # e = self.dropout(F.leaky_relu(self.attn_fc1(z2)))
-        # elif edge_type == "hc_coord":
-            # e = self.dropout(F.leaky_relu(self.attn_fc2(z2)))
-
-        return e[0]
-
-    def compute_attn_coef(self, g, sub_edgelist):
-        
-        # get the list of coord->position edges
-        sub_edges = list(zip(sub_edgelist.source, sub_edgelist.target))
-        # tensor to store the attention coefficient for each coord->position edge
-
-        sub_edgelist_e = sub_edgelist.apply(self.compute_e_func, axis=1)
-        sub_edgelist = sub_edgelist.assign(e=sub_edgelist_e)
-        e_tensor = torch.Tensor(sub_edgelist_e).view(sub_edgelist_e.shape[0], 1)
-
-        # assign e to edge attributes
-        nx.set_edge_attributes(g, name="e", values=dict(zip(sub_edges, e_tensor)))
-        
-        # softmax of the attention coefficient
-        # group the coord->position edges by sources
-        groups = sub_edgelist.groupby('source')
-        alpha = torch.zeros((e_tensor.shape[0], 1))
-        for source, group in groups:
-            edge_attn_coef = e_tensor[group.index,:]
-            softmax_edge_attn_coef = F.softmax(edge_attn_coef, dim=0)
-            alpha[group.index,:] = softmax_edge_attn_coef
-            
-        # assign the alpha values for sub edges
-        nx.set_edge_attributes(g, name="alpha", values=dict(zip(sub_edges, alpha)))
-        return g, sub_edgelist
-
-    def aggregate_neighbors(self, g, edgelist):
-        sources = edgelist.source.unique()
-        for source in sources:
-            group = edgelist[edgelist.source == source]
-            neighbor_tensors = []
-            for neighbor in group.target:
-                alpha = g.edges[source, neighbor]["alpha"]
-                neighbor_z = g.nodes[neighbor]["z"]
-                attn_z = alpha * neighbor_z
-                neighbor_tensors.append(attn_z)
-            sum_neighbor_tensors = torch.stack(neighbor_tensors, dim=0).sum(dim=0)
-            sum_neighbor_tensors = F.relu(sum_neighbor_tensors)
-            g.nodes[source]["z"] = sum_neighbor_tensors
-
-        return g
-    
-    def team_embedding(self, g):
-        hc_ids = [k for k in g.nodes() if g.nodes[k]["final_position"] == "HC"]
-        team_emb = torch.zeros((len(hc_ids), self.emb_dim))
-        for idx, hc in enumerate(hc_ids):
-            hc_emb = g.nodes[hc]["z"]
-            team_emb[idx,:] = hc_emb
-
-        return g, team_emb
-
-    def forward(self, g, f, salary):
-        if self.dropout == True:
-            z = self.dropout(F.relu(self.fc(f)))
-        else:
-            z = F.relu(self.fc(f))
+    def forward(self, g, f, team_features_dict, team_labels_dict):
+        start_time = time.time()
+        z = self.fc(f)
 
         nx.set_node_attributes(g, name="z", values=dict(zip(g.nodes(), z)))
 
-        coord_to_position_edgelist = self.generate_coord_position_edgelist(g)
-        g, coord_to_position = self.compute_attn_coef(g, coord_to_position_edgelist)
-        g = self.aggregate_neighbors(g, coord_to_position)
+        # split into teams
+        teams = nx.weakly_connected_components(g)
+        team_emb_tensor = torch.zeros((nx.number_weakly_connected_components(g), self.emb_dim))
+        team_features_tensor = torch.zeros((nx.number_weakly_connected_components(g), self.num_team_features))
+        team_label_tensor = torch.zeros((nx.number_weakly_connected_components(g), 1))
 
-        hc_to_coord_edgelist = self.generate_hc_coord_edgelist(g)
-        g, hc_to_coord = self.compute_attn_coef(g, hc_to_coord_edgelist)
-        g = self.aggregate_neighbors(g, hc_to_coord)
+        # iterate through every team
+        for idx, team in enumerate(teams):
+            team_sub_G = g.subgraph(team).copy()
+            team_edgelist = nx.to_pandas_edgelist(team_sub_G)
+            
+            # position pairwise edges
+            position_ids = [k for k in team_sub_G.nodes() if team_sub_G.nodes[k]["final_position"] in ["O", "D", "S"]]
+            for pos in position_ids:
+                position_to_position = self.generate_outedge_edgelist(g, team_edgelist, pos)
+                aggregated_pos_z = self.aggregate_neighbors(position_to_position, "pos_pos")
+                g.nodes[pos]["z"] = F.elu(aggregated_pos_z)
 
-        g, team_emb = self.team_embedding(g)
+            # coord -> position edges
+            coord_ids = [k for k in team_sub_G.nodes() if team_sub_G.nodes[k]["final_position"] in ["OC", "SC", "DC"]]
+            for coord in coord_ids:
+                coord_to_position = self.generate_outedge_edgelist(g, team_edgelist, coord)
+                aggregated_coord_z = self.aggregate_neighbors(coord_to_position, "coord_pos")
+                g.nodes[coord]["z"] = F.elu(aggregated_coord_z)
 
-        team_emb_salary = torch.cat((team_emb, salary), dim=1)
-        # y_hat = self.dropout(F.relu(self.output_fc1(team_emb_salary)))
-        # y_hat = self.output_fc2(y_hat)
-        y_hat = F.relu(self.output_fc2(team_emb_salary))
-        y_hat = F.softmax(y_hat, dim=1)
+            # hc -> coord edges
+            hc = [k for k in team_sub_G.nodes() if team_sub_G.nodes[k]["final_position"] == "HC"][0]
+            year = team_sub_G.nodes[hc]["Year"]
+            team = team_sub_G.nodes[hc]["Team"]
+            hc_to_coord = self.generate_outedge_edgelist(g, team_edgelist, hc)
+            aggregated_hc_z = self.aggregate_neighbors(hc_to_coord, "hc_coord")
+            g.nodes[hc]["z"] = aggregated_hc_z
 
-        return g, y_hat
+            # Team embedding
+            team_emb_tensor[idx,:] = aggregated_hc_z
+            team_features_tensor[idx,:] = team_features_dict[(year,team)]
+            team_label_tensor[idx] = team_labels_dict[(year, team)]
 
+        return team_emb_tensor, team_features_tensor, team_label_tensor
 
+class MultiHeadLayer(nn.Module):
+    def __init__(self, in_dim, emb_dim, num_heads, num_team_features, merge):
+        super(MultiHeadLayer, self).__init__()
+        self.heads = nn.ModuleList()
+        for i in range(num_heads):
+            self.heads.append(HierGATLayer(in_dim, emb_dim, num_team_features))
+
+        self.merge = merge
+
+    def forward(self, g, f, team_features_dict, team_labels_dict):
+        team_emb_list = []
+        for attn_head in self.heads:
+            team_emb, team_features, team_labels = attn_head(g, f, team_features_dict, team_labels_dict)
+            team_emb_list.append(team_emb)
+        if self.merge == "avg":
+            return torch.mean(torch.stack(team_emb_list), dim=0), team_features, team_labels
+        else:
+            return torch.cat(team_emb_list, dim=1), team_features, team_labels
+
+class HierGATTeamEmb(nn.Module):
+    def __init__(self, in_dim, emb_dim, num_heads, num_team_features, merge):
+        super(HierGATTeamEmb, self).__init__()
+        self.layer1 = MultiHeadLayer(in_dim, emb_dim, num_heads, num_team_features, merge)
+        # fully connected layer at output level
+        if merge == "avg":
+            self.output_layer = nn.Linear(emb_dim + num_team_features, 1, bias=True)
+        else:
+            self.output_layer = nn.Linear(emb_dim*num_heads + num_team_features, 1, bias=True)
+
+    def forward(self, g, f, team_features_dict, team_labels_dict):
+        team_emb, team_features, team_labels = self.layer1(g, f, team_features_dict, team_labels_dict)
+        team_emb = F.elu(team_emb)
+        concat_x = torch.cat((team_emb, team_features), dim=1)
+        y_hat = self.output_layer(concat_x)
+
+        return y_hat, team_labels
 
 

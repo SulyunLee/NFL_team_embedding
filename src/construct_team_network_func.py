@@ -72,7 +72,7 @@ def construct_seasonal_mentorship_network(df, year, team):
 
     return team_G
 
-def construct_fullseason_mentorship_network(df):
+def construct_fullseason_mentorship_network(df, pos_connect=True):
     '''
     This function constructs a nework using all coaches in the full season.
     One network consists of subgraphs that includes each of the seasons.
@@ -124,8 +124,19 @@ def construct_fullseason_mentorship_network(df):
 
         hc = hc[0]
 
-        # connect the node pairs.
         edgelist = []
+        # connect the pairwise position coaches
+        if pos_connect == True:
+            o_pairs = list(itertools.product(o_list, o_list))
+            edgelist.extend(o_pairs)
+
+            d_pairs = list(itertools.product(d_list, d_list))
+            edgelist.extend(d_pairs)
+
+            s_pairs = list(itertools.product(s_list, s_list))
+            edgelist.extend(s_pairs)
+
+        # connect the node pairs.
         for s in s_list:
             if len(sc_list) == 0:
                 edgelist.append(tuple([hc, s]))
@@ -198,3 +209,30 @@ def construct_cumulative_colleague_network(initial_g, df, min_year, max_year):
 
     return cumulative_g
 
+def construct_seasonal_colleague_network(df, min_year, max_year):
+    try:
+        teams = df.ServingTeam.unique()
+    except:
+        teams = df.Team.unique()
+
+    seasonal_G = nx.DiGraph()
+    ids = df["ID"]
+    records = df[["Name", "Year", "Team", "final_position"]].to_dict('records')
+    id_record_dict = dict(zip(ids, records))
+    for year in tqdm(range(min_year, max_year+1)):
+        for team in teams:
+            try: 
+                records = df[(df.StartYear <= year) & (df.EndYear >= year) & (df.ServingTeam == team)]
+            except:
+                records = df[(df.Year == year) & (df.Team == team)]
+
+            if (records.shape[0] > 1) and (records.Name.unique().shape[0] > 1):
+                coach_list = list(records.ID)
+                # all pairs of node directions
+                edges = list(itertools.product(coach_list, coach_list))
+                seasonal_G.add_edges_from(edges)
+
+        nx.set_node_attributes(seasonal_G, id_record_dict)
+
+    return seasonal_G
+    

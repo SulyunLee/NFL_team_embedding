@@ -69,13 +69,11 @@ if __name__ == "__main__":
     all_coaching_record_filename = "../datasets/all_coach_records_cleaned.csv"
     NFL_coach_record_filename = "../datasets/NFL_Coach_Data_final_position.csv"
     total_win_filename = "../datasets/Total_Win.csv"
-    # yearly_node_embedding_filename = "../datasets/yearly_node_embedding_df.csv"
-    cumulative_node_embedding_filename = "../datasets/cumulative_colleague_G_node_embedding_df.csv"
+    cumulative_node_embedding_filename = "../datasets/cumulative_colleague_G_node_embedding_all_df.csv"
 
     all_record_df = pd.read_csv(all_coaching_record_filename)
     NFL_record_df = pd.read_csv(NFL_coach_record_filename)
     total_win_df = pd.read_csv(total_win_filename)
-    # yearly_node_embedding_df = pd.read_csv(yearly_node_embedding_filename)
     cumulative_node_embedding_df = pd.read_csv(cumulative_node_embedding_filename)
     #################################################################
 
@@ -127,10 +125,11 @@ if __name__ == "__main__":
     # Node embedding that contains the collaboration information during the past seasons.
     # node embedding for predicting year t = average of embedding upto year t-2 
     # and yearly embedding at year t-1
+    print("Feature 6: Collaboration features (node embedding)")
     cumul_emb_columns = cumulative_node_embedding_df.columns[cumulative_node_embedding_df.columns.str.contains("cumul_emb")].tolist()
     coach_emb_features = np.zeros((NFL_coach_instances.shape[0], len(cumul_emb_columns)))
     no_node_emb_arr = np.zeros((NFL_coach_instances.shape[0])).astype(int) # if there is no node embedding for the corresponding coach
-    for idx, row in NFL_coach_instances.iterrows():
+    for idx, row in tqdm(NFL_coach_instances.iterrows(), total=NFL_coach_instances.shape[0]):
         year = row.Year
         name = row.Name
             
@@ -149,20 +148,17 @@ if __name__ == "__main__":
 
     # check nodes with no embedding learned from Deepwalk on cumulative network until previous years.
     for hier_num in range(1, 4):
-        print("Hier_num: {}".format(hier_num))
+        # print("Hier_num: {}".format(hier_num))
         for year in range(2002, 2020):
             num_no_emb = NFL_coach_instances[(NFL_coach_instances.final_hier_num==hier_num) & (NFL_coach_instances.Year==year)].no_node_emb.sum()
-            print(num_no_emb)
+            # print(num_no_emb)
 
     no_node_emb_instances = NFL_coach_instances[NFL_coach_instances.no_node_emb==1]
     no_node_emb_instances.reset_index(drop=True, inplace=True)
-    cnt=0
     for idx, coach in no_node_emb_instances.iterrows():
         year = coach.Year
         college_coaching_record = all_record_df[(all_record_df.StartYear<year) & (all_record_df.Name==coach.Name)]
-        if college_coaching_record.shape[0] != 0:
-            count += 1
 
-    # NFL_coach_instances.to_csv("../datasets/NFL_Coach_Data_with_features.csv",\
-            # index=False, encoding="utf-8-sig")
+    NFL_coach_instances.to_csv("../datasets/NFL_Coach_Data_with_features.csv",\
+            index=False, encoding="utf-8-sig")
     
