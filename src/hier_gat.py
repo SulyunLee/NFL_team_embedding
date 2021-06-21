@@ -10,11 +10,12 @@ import networkx as nx
 import time
 
 class HierGATLayer(nn.Module):
-    def __init__(self, in_dim, emb_dim, num_team_features):
+    def __init__(self, in_dim, emb_dim, num_team_features, pos_connect):
         super(HierGATLayer, self).__init__()
         self.in_dim = in_dim
         self.emb_dim = emb_dim
         self.num_team_features = num_team_features
+        self.pos_connect = pos_connect
 
         # fully connected layer - W
         self.fc = nn.Linear(in_dim, emb_dim, bias=False)
@@ -93,12 +94,13 @@ class HierGATLayer(nn.Module):
             team_sub_G = g.subgraph(team).copy()
             team_edgelist = nx.to_pandas_edgelist(team_sub_G)
             
-            # position pairwise edges
-            position_ids = [k for k in team_sub_G.nodes() if team_sub_G.nodes[k]["final_position"] in ["O", "D", "S"]]
-            for pos in position_ids:
-                position_to_position = self.generate_outedge_edgelist(g, team_edgelist, pos)
-                aggregated_pos_z = self.aggregate_neighbors(position_to_position, "pos_pos")
-                g.nodes[pos]["z"] = F.elu(aggregated_pos_z)
+            if self.pos_connect == True:
+                # position pairwise edges
+                position_ids = [k for k in team_sub_G.nodes() if team_sub_G.nodes[k]["final_position"] in ["O", "D", "S"]]
+                for pos in position_ids:
+                    position_to_position = self.generate_outedge_edgelist(g, team_edgelist, pos)
+                    aggregated_pos_z = self.aggregate_neighbors(position_to_position, "pos_pos")
+                    g.nodes[pos]["z"] = F.elu(aggregated_pos_z)
 
             # coord -> position edges
             coord_ids = [k for k in team_sub_G.nodes() if team_sub_G.nodes[k]["final_position"] in ["OC", "SC", "DC"]]
@@ -123,11 +125,11 @@ class HierGATLayer(nn.Module):
         return team_emb_tensor, team_features_tensor, team_label_tensor
 
 class MultiHeadLayer(nn.Module):
-    def __init__(self, in_dim, emb_dim, num_heads, num_team_features, merge):
+    def __init__(self, in_dim, emb_dim, num_heads, num_team_features, merge, pos_connect):
         super(MultiHeadLayer, self).__init__()
         self.heads = nn.ModuleList()
         for i in range(num_heads):
-            self.heads.append(HierGATLayer(in_dim, emb_dim, num_team_features))
+            self.heads.append(HierGATLayer(in_dim, emb_dim, num_team_features, pos_connect))
 
         self.merge = merge
 
@@ -142,9 +144,9 @@ class MultiHeadLayer(nn.Module):
             return torch.cat(team_emb_list, dim=1), team_features, team_labels
 
 class HierGATTeamEmb(nn.Module):
-    def __init__(self, in_dim, emb_dim, num_heads, num_team_features, merge):
+    def __init__(self, in_dim, emb_dim, num_heads, num_team_features, merge, pos_connect):
         super(HierGATTeamEmb, self).__init__()
-        self.layer1 = MultiHeadLayer(in_dim, emb_dim, num_heads, num_team_features, merge)
+        self.layer1 = MultiHeadLayer(in_dim, emb_dim, num_heads, num_team_features, merge, pos_connect)
         # fully connected layer at output level
         if merge == "avg":
             self.output_layer = nn.Linear(emb_dim + num_team_features, 1, bias=True)

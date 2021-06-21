@@ -165,7 +165,6 @@ def mlp(hidden_nodes, normalized_train_x, train_labels, normalized_valid_x, vali
     epochs = 300
 
 
-    patience = 7
 
     # dictionaries that store average auc and accuracy for each hidden node
     mlp_loss_dict = {"train":[], "valid":[], "test":[]}
@@ -183,7 +182,7 @@ def mlp(hidden_nodes, normalized_train_x, train_labels, normalized_valid_x, vali
 
             optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
             # Early stopping
-            stopper = EarlyStopping(patience=30)
+            stopper = EarlyStopping(patience=100)
 
             train_loss_arr = np.zeros((epochs))
             valid_loss_arr = np.zeros((epochs))
