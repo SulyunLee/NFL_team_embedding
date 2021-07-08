@@ -72,7 +72,7 @@ def construct_seasonal_mentorship_network(df, year, team):
 
     return team_G
 
-def construct_fullseason_mentorship_network(df, pos_connect=True):
+def construct_fullseason_mentorship_network(df, pos_connect):
     '''
     This function constructs a nework using all coaches in the full season.
     One network consists of subgraphs that includes each of the seasons.

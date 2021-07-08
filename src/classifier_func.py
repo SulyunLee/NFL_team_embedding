@@ -182,7 +182,7 @@ def mlp(hidden_nodes, normalized_train_x, train_labels, normalized_valid_x, vali
 
             optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
             # Early stopping
-            stopper = EarlyStopping(patience=100)
+            stopper = EarlyStopping(patience=50)
 
             train_loss_arr = np.zeros((epochs))
             valid_loss_arr = np.zeros((epochs))
@@ -277,5 +277,45 @@ def mlp(hidden_nodes, normalized_train_x, train_labels, normalized_valid_x, vali
     print("Train loss: {:.3f}, auc: {:.3f}\n Valid loss: {:.3f}, auc: {:.3f}\n Test loss: {:.3f}, auc: {:.3f}".format(mlp_loss_dict["train"][max_idx], mlp_auc_dict["train"][max_idx], mlp_loss_dict["valid"][max_idx], mlp_auc_dict["valid"][max_idx], mlp_loss_dict["test"][max_idx], mlp_auc_dict["test"][max_idx]))
 
     return mlp_auc_dict
+
+class Hier_NN(nn.Module):
+    '''
+    Hierarchically aggregate coach features using fully-connected NN.
+    '''
+    def __init__(self, coach_feature_dim, team_feature_dim, output_dim, collab):
+        super().__init__()
+        self.coach_feature_dim = coach_feature_dim
+        self.team_feature_dim = team_feature_dim
+        self.output_dim = output_dim
+        self.collab = collab
+
+        self.coordinator_fc = nn.Linear(2*coach_feature_dim, coach_feature_dim)
+        self.hc_fc = nn.Linear(4*coach_feature_dim, coach_feature_dim, bias=True)
+
+        if collab:
+            self.hidden_fc = nn.Linear(coach_feature_dim + team_feature_dim, int(coach_feature_dim/2), bias=True)
+            self.output_fc = nn.Linear(int(coach_feature_dim/2), output_dim, bias=True)
+        else:
+            self.output_fc = nn.Linear(coach_feature_dim + team_feature_dim, 1, bias=True)
+
+    def forward(self, offensive, defensive, special, hc, team_feature):
+
+        # feed averaged position coach features and coordinator features into a NN layer
+        offensive_f = F.relu(self.coordinator_fc(offensive))
+        defensive_f = F.relu(self.coordinator_fc(defensive))
+        special_f = F.relu(self.coordinator_fc(special))
+
+        # feed offensive,defensive, special, and head coach aggregated features into a NN layer
+        concat_team_f = torch.cat([offensive_f, defensive_f, special_f, hc], dim=1)
+        team_emb = F.relu(self.hc_fc(concat_team_f))
+
+        # concatenate team embedding and team features to output NN layer.
+        x = torch.cat([team_emb, team_feature], dim=1)
+        if self.collab:
+            x = F.relu(self.hidden_fc(x))
+        x = self.output_fc(x)
+
+        return x
+
 
 
