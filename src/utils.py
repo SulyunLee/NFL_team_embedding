@@ -21,5 +21,26 @@ class EarlyStopping:
             self.best_score = score
             self.counter = 0
 
-        return self.early_stop
+        return self.counter, self.early_stop
 
+def normalize(train, valid, test):
+    '''
+    This function normalizes input train, validation, and test datasets before feeding
+    into a deep learning model.
+    Uses mean zero normalization function.
+    '''
+
+    combined = np.zeros((train.shape[0] + valid.shape[0] + test.shape[0], train.shape[1]))
+    combined[:train.shape[0]] = train
+    combined[train.shape[0]:train.shape[0]+valid.shape[0],:] = valid
+    combined[train.shape[0]+valid.shape[0]:,:] = test
+
+    means = combined.mean(axis=0)
+    stds = combined.std(axis=0)
+
+    normalized_train = (train - means) / stds
+    normalized_valid = (valid - means) / stds
+    normalized_test = (test - means) / stds
+
+    return torch.Tensor(normalized_train), torch.Tensor(normalized_valid), torch.Tensor(normalized_test)
+    
