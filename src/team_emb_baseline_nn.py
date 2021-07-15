@@ -1,6 +1,7 @@
 '''
-Aggregate coach features hierarchically using mean aggregator.
+Aggregate coach features non-hierarchically using neural network aggregator (fully-connected)
 '''
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,11 +20,13 @@ if __name__ == "__main__":
     parser.add_argument('-feature_set', '--feature_set', type=int, help="Feature set number\n(0: Basic features, 1: Basic features + salary, 2: Basic features & node embedding + salary, 3: Basic features & node embedding + salary + diversity)")
     parser.add_argument('-train_split_year', '--train_split_year', type=int, help="Maximum year for training set")
     parser.add_argument('-valid_split_year', '--valid_split_year', type=int, help="Maximum year for validation set")
+    parser.add_argument('-seed', '--seed', default=0, type=int, help="Random seed")
 
     args = parser.parse_args()
     feature_set = args.feature_set
     train_split_year = args.train_split_year
     valid_split_year = args.valid_split_year
+    seed = args.seed
 
     #################################################################
     # Load datasets
@@ -103,34 +106,109 @@ if __name__ == "__main__":
     #########################################################
     ## Generate team embeddings...
     #########################################################
-    print("Generating team embedding, salary, and labels...")
+    print("Generating team embedding, team_features, and labels...")
+    # aggregate coaches' features in the same team (avg).
     print("Train")
-    train_team_emb, train_team_feature, train_labels = hierarchical_average_features(train_record, train_team_features, train_labels, coach_feature_names, team_feature_names, "failure")
+    train_team_emb, train_team_feature, train_labels = simple_aggregate_features(train_record, train_team_features, train_labels, coach_feature_names, team_feature_names, "failure")
     print("Validation")
-    valid_team_emb, valid_team_feature, valid_labels = hierarchical_average_features(valid_record, valid_team_features, valid_labels, coach_feature_names, team_feature_names, "failure")
+    valid_team_emb, valid_team_feature, valid_labels = simple_aggregate_features(valid_record, valid_team_features, valid_labels, coach_feature_names, team_feature_names, "failure")
     print("Test")
-    test_team_emb, test_team_feature, test_labels = hierarchical_average_features(test_record, test_team_features, test_labels, coach_feature_names, team_feature_names, "failure")
+    test_team_emb, test_team_feature, test_labels = simple_aggregate_features(test_record, test_team_features, test_labels, coach_feature_names, team_feature_names, "failure")
 
-    # concatenage team features to team embedding
-    train_x = np.concatenate((train_team_emb, train_team_feature), axis=1)
-    valid_x = np.concatenate((valid_team_emb, valid_team_feature), axis=1)
-    test_x = np.concatenate((test_team_emb, test_team_feature), axis=1)
+    ## normalize
+    # averaged feature
+    normalized_train_x, normalized_valid_x, normalized_test_x = normalize(train_team_emb, valid_team_emb, test_team_emb)
 
+    # team feature
+    if feature_set != 0:
+        normalized_train_team_feature, normalized_valid_team_feature, normalized_test_team_feature = normalize(train_team_feature, valid_team_feature, test_team_feature)
+    else:
+        normalized_train_team_feature = normalized_valid_team_feature = normalized_test_team_feature = torch.Tensor()
+
+
+    # Convert labels to tensors
+    train_labels = torch.Tensor(train_labels).view(train_labels.shape[0], 1)
+    valid_labels = torch.Tensor(valid_labels).view(valid_labels.shape[0], 1)
+    test_labels = torch.Tensor(test_labels).view(test_labels.shape[0],1)
+
+    # Modeling
+    print("Training model...")
+    loss = nn.BCEWithLogitsLoss()
+    epochs = 100000
+
+    # dictionaries that store average auc and accuracy for each hidden node
+    torch.manual_seed(seed)
+    model = Nonhier_NN(coach_feature_dim=len(coach_feature_names),
+                        team_feature_dim=len(team_feature_names),
+                        output_dim=1,
+                        feature_set=feature_set)
+
+    # optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    # Early stopping
+    stopper = EarlyStopping(patience=50)
+
+    train_loss_arr = np.zeros((epochs)) 
+    valid_loss_arr = np.zeros((epochs)) 
+    test_loss_arr = np.zeros((epochs)) 
+    train_auc_arr = np.zeros((epochs)) 
+    valid_auc_arr = np.zeros((epochs)) 
+    test_auc_arr = np.zeros((epochs)) 
+
+    for epoch in tqdm(range(epochs)):
+        print("Epoch {}".format(epoch))
+        model.train()
+
+        optimizer.zero_grad()
+
+        train_y_hat = model(normalized_train_x, normalized_train_team_feature)
+        train_loss = loss(train_y_hat, train_labels)
+        train_loss_arr[epoch] = train_loss
+
+        # get the train predictions
+        train_prob = torch.sigmoid(train_y_hat)
+        train_pred = torch.round(train_prob)
+        train_auc = round(roc_auc_score(train_labels.detach().numpy(), train_prob.detach().numpy()), 3)
+        train_auc_arr[epoch] = train_auc
+
+        train_loss.backward()
+        optimizer.step()
     
-    ## MLP
-    print("*** MLP: ")
+        with torch.no_grad():
+            model.eval()
 
-    # normalize
-    normalized_train_x, normalized_valid_x, normalized_test_x = normalize(train_x, valid_x, test_x)
+            # predict on the validation set
+            valid_y_hat = model(normalized_valid_x, normalized_valid_team_feature)
+            valid_loss = loss(valid_y_hat, valid_labels)
+            valid_loss_arr[epoch] = valid_loss
 
-    train_labels = torch.Tensor(train_labels)
-    valid_labels = torch.Tensor(valid_labels)
-    test_labels = torch.Tensor(test_labels)
+            # get the valid predictions
+            valid_prob = torch.sigmoid(valid_y_hat)
+            valid_pred = torch.round(valid_prob)
+            valid_auc = round(roc_auc_score(valid_labels.detach().numpy(), valid_prob.detach().numpy()), 3)
+            valid_auc_arr[epoch] = valid_auc
 
-    if feature_set == 2 or feature_set == 3:
-        hidden_nodes = [5, 10, 15, 20, 25, 30]
-    elif feature_set == 0 or feature_set == 1:
-        hidden_nodes = [3, 5, 7, 10]
+            # predict on the test set
+            test_y_hat = model(normalized_test_x, normalized_test_team_feature)
+            test_loss = loss(test_y_hat, test_labels)
+            test_loss_arr[epoch] = test_loss
 
-    mlp_auc_dict = mlp(hidden_nodes, normalized_train_x, train_labels, normalized_valid_x, valid_labels, normalized_test_x, test_labels)
+            # get the test predictions
+            test_prob = torch.sigmoid(test_y_hat)
+            test_pred = torch.round(test_prob)
+            test_auc = round(roc_auc_score(test_labels.detach().numpy(), test_prob.detach().numpy()), 3)
+            test_auc_arr[epoch] = test_auc
+
+            print("Train Loss: {:.3f}, auc: {:.3f}\nValid Loss: {:.3f}, auc: {:.3f}\nTest Loss: {:.3f}, auc: {:.3f}".format(train_loss,train_auc, valid_loss, valid_auc, test_loss, test_auc))
+
+            counter, stop = stopper.step(valid_loss, model)
+            if counter == 1:
+                remember_epoch = epoch - 1
+            if stop:
+                break
+
+    print("Performance summary (feature set {}, seed {}):".format(feature_set, seed))
+    print("*Stopped at epoch {}".format(remember_epoch))
+    print("Train Loss: {:.3f}, AUC: {:.3f}\nValid Loss: {:.3f}, AUC: {:.3f}\nTest Loss: {:.3f}, AUC: {:.3f}".format(train_loss_arr[remember_epoch], train_auc_arr[remember_epoch], valid_loss_arr[remember_epoch], valid_auc_arr[remember_epoch], test_loss_arr[remember_epoch], test_auc_arr[remember_epoch]))
+
 

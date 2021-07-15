@@ -119,7 +119,10 @@ class HierGATLayer(nn.Module):
 
             # Team embedding
             team_emb_tensor[idx,:] = aggregated_hc_z
-            team_features_tensor[idx,:] = team_features_dict[(year,team)]
+            if self.num_team_features == 0:
+                team_features_tensor = torch.Tensor()
+            else:
+                team_features_tensor[idx,:] = team_features_dict[(year,team)]
             team_label_tensor[idx] = team_labels_dict[(year, team)]
 
         return team_emb_tensor, team_features_tensor, team_label_tensor

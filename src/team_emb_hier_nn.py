@@ -94,13 +94,15 @@ def generate_feature_set(record_df, team_features_df, labels_df, coach_feature_n
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-collab', '--collab', default=False, type=bool, help="if the coach previous collaborations (node embedding) should be considered as the features")
-    parser.add_argument('-diversity', '--diversity', default=False, type=bool)
-    parser.add_argument('-seed', '--seed', default=0, type=int, help="random seed")
+    parser.add_argument('-feature_set', '--feature_set', type=int, help="Feature set number\n(0: Basic features, 1: Basic features + salary, 2: Basic features & node embedding + salary, 3: Basic features & node embedding + salary + diversity)")
+    parser.add_argument('-train_split_year', '--train_split_year', type=int, help="Maximum year for training set")
+    parser.add_argument('-valid_split_year', '--valid_split_year', type=int, help="Maximum year for validation set")
+    parser.add_argument('-seed', '--seed', default=0, type=int, help="Random seed")
 
     args = parser.parse_args()
-    collab = args.collab
-    diversity = args.diversity
+    feature_set = args.feature_set
+    train_split_year = args.train_split_year
+    valid_split_year = args.valid_split_year
     seed = args.seed
 
     #################################################################
@@ -123,28 +125,29 @@ if __name__ == "__main__":
     basic_features = ["TotalYearsInNFL", "Past5yrsWinningPerc_best", "Past5yrsWinningPerc_avg"]
     cumul_emb_features = NFL_record_df.columns[NFL_record_df.columns.str.contains("cumul_emb")].tolist()
 
-    if collab == True:
-        coach_feature_names = basic_features + cumul_emb_features
-    else:
+    # generate team feature set
+    team_diversity_df = generate_team_diversity_feature(NFL_record_df, cumul_emb_features)
+    team_features = team_salary_df.merge(team_diversity_df, how="left", on=["Team", "Year"])
+
+    # define feature set
+    if feature_set == 0:
         coach_feature_names = basic_features
-
-    #########################################################
-    ## Generating team features
-    #########################################################
-    if collab == True:
-        team_diversity_df = generate_team_diversity_feature(NFL_record_df, cumul_emb_features)
-        team_features = team_salary_df.merge(team_diversity_df, how="left", on=["Team", "Year"])
-        if diversity == True:
-            team_feature_names = ["Salary_Rank", "Max_Emb_Similarity", "Mean_Emb_Similarity"]
-        else:
-            team_feature_names = ["Salary_Rank"]
-    else:
-        team_features = team_salary_df
+        team_feature_names = []
+    elif feature_set == 1:
+        coach_feature_names = basic_features
         team_feature_names = ["Salary_Rank"]
+    elif feature_set == 2:
+        coach_feature_names = basic_features + cumul_emb_features
+        team_feature_names = ["Salary_Rank"]
+    elif feature_set == 3:
+        coach_feature_names = basic_features + cumul_emb_features
+        team_feature_names = ["Salary_Rank", "Max_Emb_Similarity", "Mean_Emb_Similarity"]
 
-    # split coach record, salary, and label into train, validation, test set
-    train_split_year = 2013
-    valid_split_year = 2015
+    print("Feature set {}".format(feature_set))
+
+    #########################################################
+    ### Split coach record, salary, and label into train, validation, and test set
+    #########################################################
 
     train_record = NFL_record_df[(NFL_record_df.Year >= 2002) & (NFL_record_df.Year <= train_split_year)]
     train_record.reset_index(drop=True, inplace=True)
@@ -200,7 +203,10 @@ if __name__ == "__main__":
     normalized_train_hc, normalized_valid_hc, normalized_test_hc = normalize(train_hc, valid_hc, test_hc)
 
     # team features
-    normalized_train_team_features, normalized_valid_team_features, normalized_test_team_features = normalize(train_team_features_arr, valid_team_features_arr, test_team_features_arr)
+    if feature_set != 0:
+        normalized_train_team_features, normalized_valid_team_features, normalized_test_team_features = normalize(train_team_features_arr, valid_team_features_arr, test_team_features_arr)
+    else:
+        normalized_train_team_features = normalized_valid_team_features = normalized_test_team_features = torch.Tensor()
 
     # Convert labels to tensors
     train_labels_arr = torch.Tensor(train_labels_arr).view(train_labels_arr.shape[0], 1)
@@ -210,14 +216,14 @@ if __name__ == "__main__":
     # Modeling
     print("Training model...")
     loss = nn.BCEWithLogitsLoss()
-    epochs = 3000
+    epochs = 100000
 
     # dictionaries that store average auc and accuracy for each hidden node
     torch.manual_seed(seed)
     model = Hier_NN(coach_feature_dim = len(coach_feature_names),
                     team_feature_dim = len(team_feature_names),
                     output_dim = 1,
-                    collab=collab)
+                    feature_set=feature_set)
 
     # optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -281,7 +287,7 @@ if __name__ == "__main__":
             if stop:
                 break
 
-    print("Performance summary:")
+    print("Performance summary (feature set {}, seed {}):".format(feature_set, seed))
     print("*Stopped at epoch {}".format(remember_epoch))
     print("Train Loss: {:.3f}, AUC: {:.3f}\nValid Loss: {:.3f}, AUC: {:.3f}\nTest Loss: {:.3f}, AUC: {:.3f}".format(train_loss_arr[remember_epoch], train_auc_arr[remember_epoch], valid_loss_arr[remember_epoch], valid_auc_arr[remember_epoch], test_loss_arr[remember_epoch], test_auc_arr[remember_epoch]))
 

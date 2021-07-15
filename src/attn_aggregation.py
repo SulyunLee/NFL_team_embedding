@@ -41,6 +41,21 @@ class AttnAggLayer(nn.Module):
             team_edgelist = nx.to_pandas_edgelist(team_sub_G)
 
             team_zs = []
+
+            # retrieve the features
+            source_f = team_edgelist.source.apply(lambda x:g.nodes[x]["f"])
+            target_f = team_edgelist.target.apply(lambda x: g.nodes[x]["f"])
+
+            team_edgelist = team_edgelist.assign(source_f=source_f)
+            team_edgelist = team_edgelist.assign(target_f=target_f)
+
+            # compute attention coefficients
+            source_f_stacked = torch.stack(team_edgelist.source_f.tolist())
+            target_f_stacked = torch.stack(team_edgelist.target_f.tolist())
+            f2 = torch.cat([source_f_stacked, target_f_stacked], dim=1)
+            e = F.leaky_relu(self.attn_fc(f2))
+            team_edgelist = team_edgelist.assign(e=e.detach().numpy())
+
             # get the edgelist of each source node
             for node in team_sub_G.nodes():
                 if team_sub_G.nodes[node]["final_position"] == "HC":
@@ -49,18 +64,9 @@ class AttnAggLayer(nn.Module):
                     
                 sub_edgelist = team_edgelist[team_edgelist.source == node]
                 sub_edgelist.reset_index(drop=True, inplace=True)
-                source_f = sub_edgelist.source.apply(lambda x: g.nodes[x]["f"])
-                target_f = sub_edgelist.target.apply(lambda x: g.nodes[x]["f"])
 
-                sub_edgelist = sub_edgelist.assign(source_f = source_f)
-                sub_edgelist = sub_edgelist.assign(target_f = target_f)
-
-                # compute attention coefficients
-                source_f_stacked = torch.stack(sub_edgelist.source_f.tolist())
-                target_f_stacked = torch.stack(sub_edgelist.target_f.tolist())
-                f2 = torch.cat([source_f_stacked, target_f_stacked], dim=1)
-                e = F.leaky_relu(self.attn_fc(f2))
-                alpha = self.dropout(F.softmax(e, dim=0))
+                alpha = self.dropout(F.softmax(torch.Tensor(sub_edgelist.e), dim=0))
+                alpha = alpha.view(alpha.shape[0],1)
 
                 # aggregate neighborhood features with attention
                 attn_neighbor_f = torch.mul(torch.stack(sub_edgelist.target_f.tolist()), alpha)
@@ -72,7 +78,10 @@ class AttnAggLayer(nn.Module):
             z_prime = F.elu(self.fc(torch.stack(team_zs)))
             team_emb = z_prime.mean(dim=0)
             team_emb_tensor[idx,:] = team_emb
-            team_features_tensor[idx,:] = team_features_dict[(year,team)]
+            if self.num_team_features == 0:
+                team_features_tensor = torch.Tensor()
+            else:
+                team_features_tensor[idx,:] = team_features_dict[(year,team)]
             team_label_tensor[idx] = team_labels_dict[(year,team)]
 
         concat_x = torch.cat((team_emb_tensor, team_features_tensor), dim=1)

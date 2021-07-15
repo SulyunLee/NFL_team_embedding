@@ -114,7 +114,7 @@ def hierarchical_average_features(record_df, team_features_df, labels_df, coach_
         team_emb = sum(sums) / len(sums)
         team_emb_arr[idx,:] = team_emb
 
-        # collect salary data of the season
+        # collect team features
         team_features = np.array(team_features_df[(team_features_df.Team == team) & (team_features_df.Year == year)][team_feature_names])
         team_feature_arr[idx,:] = team_features
 

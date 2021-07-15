@@ -20,12 +20,14 @@ from classifier_func import *
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-collab', '--collab', default=False, type=bool, help="if the coach previous collaborations (node embedding) should be considered as the features")
-    parser.add_argument('-diversity', '--diversity', default=False, type=bool)
+    parser.add_argument('-feature_set', '--feature_set', type=int, help="Feature set number\n(0: Basic features, 1: Basic features + salary, 2: Basic features & node embedding + salary, 3: Basic features & node embedding + salary + diversity)")
+    parser.add_argument('-train_split_year', '--train_split_year', type=int, help="Maximum year for training set")
+    parser.add_argument('-valid_split_year', '--valid_split_year', type=int, help="Maximum year for validation set")
 
     args = parser.parse_args()
-    collab = args.collab
-    diversity = args.diversity
+    feature_set = args.feature_set
+    train_split_year = args.train_split_year
+    valid_split_year = args.valid_split_year
 
     #################################################################
     # Load datasets
@@ -47,31 +49,29 @@ if __name__ == "__main__":
     basic_features = ["TotalYearsInNFL", "Past5yrsWinningPerc_best", "Past5yrsWinningPerc_avg"]
     cumul_emb_features = NFL_record_df.columns[NFL_record_df.columns.str.contains("cumul_emb")].tolist()
 
-    # adding feature vectors as the node attributes in entire_team_G
-    if collab == True:
-        coach_feature_names = basic_features + cumul_emb_features
-    else:
-        coach_feature_names = basic_features
+    # generate team feature set
+    team_diversity_df = generate_team_diversity_feature(NFL_record_df, cumul_emb_features)
+    team_features = team_salary_df.merge(team_diversity_df, how="left", on=["Team", "Year"])
 
-    #########################################################
-    ## Generating team features
-    #########################################################
-    if collab == True:
-        team_diversity_df = generate_team_diversity_feature(NFL_record_df, cumul_emb_features)
-        team_features = team_salary_df.merge(team_diversity_df, how="left", on=["Team", "Year"])
-        if diversity == True:
-            team_feature_names = ["Salary_Rank", "Max_Emb_Similarity", "Mean_Emb_Similarity"]
-        else:
-            team_feature_names = ["Salary_Rank"]
-    else:
-        team_features = team_salary_df
+    # define feature set
+    if feature_set == 0:
+        coach_feature_names = basic_features
+        team_feature_names = []
+    elif feature_set == 1:
+        coach_feature_names = basic_features
         team_feature_names = ["Salary_Rank"]
+    elif feature_set == 2:
+        coach_feature_names = basic_features + cumul_emb_features
+        team_feature_names = ["Salary_Rank"]
+    elif feature_set == 3:
+        coach_feature_names = basic_features + cumul_emb_features
+        team_feature_names = ["Salary_Rank", "Max_Emb_Similarity", "Mean_Emb_Similarity"]
+
+    print("Feature set {}".format(feature_set))
 
     #########################################################
     ### Split coach record, salary, and label into train, validation, and test set
     #########################################################
-    train_split_year = 2015
-    valid_split_year = 2017
 
     train_record = NFL_record_df[(NFL_record_df.Year >= 2002) & (NFL_record_df.Year <= train_split_year)]
     train_record.reset_index(drop=True, inplace=True)
@@ -103,8 +103,6 @@ if __name__ == "__main__":
     test_labels.reset_index(drop=True, inplace=True)
 
     print("Number of training records: {}, validation records: {}, testing records: {}".format(train_record.shape[0], valid_record.shape[0], test_record.shape[0]))
-
-
 
     #########################################################
     ## Generate team embeddings...

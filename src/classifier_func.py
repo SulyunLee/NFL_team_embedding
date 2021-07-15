@@ -231,16 +231,16 @@ def mlp(hidden_nodes, normalized_train_x, train_labels, normalized_valid_x, vali
                     test_auc = round(roc_auc_score(test_labels.detach().numpy(), test_prob.detach().numpy()), 3)
                     test_auc_arr[epoch] = test_auc
 
-                if stopper.step(valid_loss, model):
-                    best_score = stopper.best_score
-                    best_epoch = np.where(valid_loss_arr == best_score)[0][0]
-
-                    train_loss = train_loss_arr[best_epoch]
-                    train_auc = train_auc_arr[best_epoch]
-                    valid_loss = valid_loss_arr[best_epoch]
-                    valid_auc = valid_auc_arr[best_epoch]
-                    test_loss = test_loss_arr[best_epoch]
-                    test_auc = test_auc_arr[best_epoch]
+                counter, stop = stopper.step(valid_loss, model)
+                if counter == 1:
+                    remember_epoch = epoch - 1
+                if stop:
+                    train_loss = train_loss_arr[remember_epoch]
+                    train_auc = train_auc_arr[remember_epoch]
+                    valid_loss = valid_loss_arr[remember_epoch]
+                    valid_auc = valid_auc_arr[remember_epoch]
+                    test_loss = test_loss_arr[remember_epoch]
+                    test_auc = test_auc_arr[remember_epoch]
                     break
 
             repeat_performances["train"]["loss"].append(float(train_loss))
@@ -278,25 +278,49 @@ def mlp(hidden_nodes, normalized_train_x, train_labels, normalized_valid_x, vali
 
     return mlp_auc_dict
 
-class Hier_NN(nn.Module):
+class Nonhier_NN(nn.Module):
     '''
-    Hierarchically aggregate coach features using fully-connected NN.
+    Non-hierarchically aggregate coach features using fully-connected NN.
     '''
-    def __init__(self, coach_feature_dim, team_feature_dim, output_dim, collab):
+    def __init__(self, coach_feature_dim, team_feature_dim, output_dim, feature_set):
         super().__init__()
         self.coach_feature_dim = coach_feature_dim
         self.team_feature_dim = team_feature_dim
         self.output_dim = output_dim
-        self.collab = collab
+        self.feature_set = feature_set
+
+        self.aggregator_fc = nn.Linear(coach_feature_dim, int(coach_feature_dim/2), bias=True)
+        self.output_fc = nn.Linear(int(coach_feature_dim/2) + team_feature_dim, 1, bias=True)
+
+    def forward(self, team_feature, team_features):
+        if self.feature_set == 0:
+            output = self.aggregator_fc(team_feature)
+        else:
+            x = F.relu(self.aggregator_fc(team_feature))
+            x_concat = torch.cat([x, team_features], dim=1)
+            output = self.output_fc(x_concat)
+
+        return output
+
+class Hier_NN(nn.Module):
+    '''
+    Hierarchically aggregate coach features using fully-connected NN.
+    '''
+    def __init__(self, coach_feature_dim, team_feature_dim, output_dim, feature_set):
+        super().__init__()
+        self.coach_feature_dim = coach_feature_dim
+        self.team_feature_dim = team_feature_dim
+        self.output_dim = output_dim
+        self.feature_set = feature_set
 
         self.coordinator_fc = nn.Linear(2*coach_feature_dim, coach_feature_dim)
         self.hc_fc = nn.Linear(4*coach_feature_dim, coach_feature_dim, bias=True)
 
-        if collab:
+        if self.feature_set == 2 or self.feature_set == 3:
             self.hidden_fc = nn.Linear(coach_feature_dim + team_feature_dim, int(coach_feature_dim/2), bias=True)
             self.output_fc = nn.Linear(int(coach_feature_dim/2), output_dim, bias=True)
-        else:
-            self.output_fc = nn.Linear(coach_feature_dim + team_feature_dim, 1, bias=True)
+        elif self.feature_set == 0 or self.feature_set == 1:
+            self.output_fc = nn.Linear(coach_feature_dim + team_feature_dim, output_dim, bias=True)
 
     def forward(self, offensive, defensive, special, hc, team_feature):
 
@@ -311,7 +335,7 @@ class Hier_NN(nn.Module):
 
         # concatenate team embedding and team features to output NN layer.
         x = torch.cat([team_emb, team_feature], dim=1)
-        if self.collab:
+        if self.feature_set == 2 or self.feature_set == 3:
             x = F.relu(self.hidden_fc(x))
         x = self.output_fc(x)
 
