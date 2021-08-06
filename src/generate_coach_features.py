@@ -3,6 +3,7 @@ This script generates feature vectors for each coach in each season.
 '''
 import pandas as pd
 import numpy as np
+import argparse
 from POSITION_ASSIGNMENT import *
 from tqdm import tqdm
 
@@ -64,12 +65,26 @@ def position_name_features(row):
     return HC, Coord
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-collab_type', '--collab_type', default='all', type=str, help="Collaboration type to consider when constructing collaboration networks ('NFL' or 'all' for both NFL and college coaching)")
+    parser.add_argument('-hier', '--hier', default=False, type=bool, help="If node embeddings are learned based on the hierchical networks (mentorship)")
+    parser.add_argument('-biased', '--biased', default=False, type=bool, help="If node embeddings are learned based on biased random walk")
+    parser.add_argument('-prob', '--prob', type=int)
+    parser.add_argument('-w', '--w', default=3, type=int, help="window size")
+
+    args = parser.parse_args()
+    collab_type = args.collab_type
+    hier = args.hier
+    biased = args.biased
+    prob = args.prob
+    w = args.w
+
     #################################################################
     # Load datasets
     all_coaching_record_filename = "../datasets/all_coach_records_cleaned.csv"
     NFL_coach_record_filename = "../datasets/NFL_Coach_Data_final_position.csv"
     total_win_filename = "../datasets/Total_Win.csv"
-    cumulative_node_embedding_filename = "../datasets/cumulative_colleague_G_node_embedding_all_df.csv"
+    cumulative_node_embedding_filename = "../datasets/final_embedding/cumulative_collab_G_node_embedding_{}_hier{}_biased{}_selectionprob{}_w{}_df.csv".format(collab_type, hier, biased, prob, w)
 
     all_record_df = pd.read_csv(all_coaching_record_filename)
     NFL_record_df = pd.read_csv(NFL_coach_record_filename)
@@ -148,10 +163,10 @@ if __name__ == "__main__":
 
     # check nodes with no embedding learned from Deepwalk on cumulative network until previous years.
     for hier_num in range(1, 4):
-        # print("Hier_num: {}".format(hier_num))
+        print("Hier_num: {}".format(hier_num))
         for year in range(2002, 2020):
             num_no_emb = NFL_coach_instances[(NFL_coach_instances.final_hier_num==hier_num) & (NFL_coach_instances.Year==year)].no_node_emb.sum()
-            # print(num_no_emb)
+            print(num_no_emb)
 
     no_node_emb_instances = NFL_coach_instances[NFL_coach_instances.no_node_emb==1]
     no_node_emb_instances.reset_index(drop=True, inplace=True)
@@ -159,6 +174,6 @@ if __name__ == "__main__":
         year = coach.Year
         college_coaching_record = all_record_df[(all_record_df.StartYear<year) & (all_record_df.Name==coach.Name)]
 
-    NFL_coach_instances.to_csv("../datasets/NFL_Coach_Data_with_features.csv",\
+    NFL_coach_instances.to_csv("../datasets/NFL_Coach_Data_with_features_collab{}_hier{}_biased{}_selectionprob{}_w{}.csv".format(collab_type, hier, biased, prob, w),\
             index=False, encoding="utf-8-sig")
     

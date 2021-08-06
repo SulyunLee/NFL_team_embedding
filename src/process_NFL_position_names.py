@@ -48,7 +48,7 @@ def assign_unique_position_apply(row, position_id_mapping):
     return position_id, hier_num
 
 if __name__ == "__main__":
-    #################################################################
+    ################################################################
     # Load datasets
     NFL_coach_record_filename = "../datasets/NFL_Coach_Data.csv"
     #################################################################

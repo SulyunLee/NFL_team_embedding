@@ -179,6 +179,80 @@ def construct_fullseason_mentorship_network(df, pos_connect):
 
     return id_record_dict, entire_team_G
     
+def construct_cumulative_mentorship_network(initial_g, df, min_year, max_year):
+    try:
+        teams = df.ServingTeam.unique()
+    except:
+        teams = df.Team.unique()
+    
+    cumulative_g = initial_g.copy()
+
+    # iterate through every year and every team to search for collaborations
+    for year in tqdm(range(min_year, max_year+1)):
+        for team in teams:
+            try:
+                # coaches who worked together
+                records = df[(df.StartYear <= year) & (df.EndYear >= year) & (df.ServingTeam == team)]
+            except:
+                records = df[(df.Year == year) & (df.Team == team)]
+
+            if (records.shape[0] > 1) and (records.Name.unique().shape[0] > 1):
+                # Add coach names to the graph
+                coach_list = list(records.Name)
+                new_coaches = [coach for coach in coach_list if coach not in cumulative_g.nodes()] # extract coaches not already in the graph
+                cumulative_g.add_nodes_from(new_coaches)
+
+                hc = records[records.final_position == "HC"].Name.tolist()
+                if len(hc) != 0:
+                    hc = hc[:1]
+                oc_list = records[records.final_position == "OC"].Name.tolist()
+                dc_list = records[records.final_position == "DC"].Name.tolist()
+                sc_list = records[records.final_position == "SC"].Name.tolist()
+                o_list = records[records.final_position == "O"].Name.tolist()
+                d_list = records[records.final_position == "D"].Name.tolist()
+                s_list = records[records.final_position == "S"].Name.tolist()
+
+                edgelist = []
+                # connect position coaches and coordinators.
+                # if coordinator not exist, connect position coaches with head coach.
+                if len(o_list) > 0:
+                    if len(oc_list) > 0:
+                        edgelist.extend(list(itertools.product(oc_list, o_list)))
+                    elif len(hc) > 0:
+                        edgelist.extend(list(itertools.product(hc, o_list)))
+
+                if len(d_list) > 0:
+                    if len(dc_list) > 0:
+                        edgelist.extend(list(itertools.product(dc_list, d_list)))
+                    elif len(hc) > 0:
+                        edgelist.extend(list(itertools.product(hc, d_list)))
+
+                if len(s_list) > 0:
+                    if len(sc_list) > 0:
+                        edgelist.extend(list(itertools.product(sc_list, s_list)))
+                    elif len(hc) > 0:
+                        edgelist.extend(list(itertools.product(hc, s_list)))
+
+                # connect coordinators and head coach
+                if len(hc) > 0:
+                    if len(oc_list) > 0:
+                        edgelist.extend(list(itertools.product(hc, oc_list)))
+
+                if len(hc) > 0:
+                    if len(dc_list) > 0:
+                        edgelist.extend(list(itertools.product(hc, dc_list)))
+
+                if len(hc) > 0:
+                    if len(sc_list) > 0:
+                        edgelist.extend(list(itertools.product(hc, sc_list)))
+
+                # add edges to the network
+                cumulative_g.add_edges_from(edgelist)
+
+    return cumulative_g
+
+
+
 def construct_cumulative_colleague_network(initial_g, df, min_year, max_year):
     try:
         teams = df.ServingTeam.unique()
@@ -204,8 +278,61 @@ def construct_cumulative_colleague_network(initial_g, df, min_year, max_year):
 
                 # Add colleague edges to the graph
                 edges = itertools.combinations(coach_list,2) # extract all combinations of coach pairs as edges
+
                 new_edges = [edge for edge in edges if edge not in cumulative_g.edges()] # extract edges not already in the graph
+
                 cumulative_g.add_edges_from(new_edges)
+
+    return cumulative_g
+
+def construct_cumulative_directed_colleague_network(initial_g, df, min_year, max_year, selection_prob_dict):
+    try:
+        teams = df.ServingTeam.unique()
+    except:
+        teams = df.Team.unique()
+
+    cumulative_g = initial_g.copy()
+
+    # iterate through every year and every team to search for collaborations
+    for year in tqdm(range(min_year, max_year+1)):
+        for team in teams:
+            try:
+                # coaches who worked together
+                records = df[(df.StartYear <= year) & (df.EndYear >= year) & (df.ServingTeam == team)]
+            except:
+                records = df[(df.Year == year) & (df.Team == team)]
+
+            if (records.shape[0] > 1) and (records.Name.unique().shape[0] > 1):
+                # Add coach names to the graph
+                coach_list = list(records.Name)
+                new_coaches = [coach for coach in coach_list if coach not in cumulative_g.nodes()] # extract coaches not already in the graph
+                cumulative_g.add_nodes_from(new_coaches)
+
+                # generate a dictionary that maps coach name to position hierarchy number
+                mapping_dict = dict(zip(records.Name, records.final_hier_num))
+
+                # Add colleague edges to the graph
+                edges = itertools.permutations(coach_list,2) # extract all combinations of coach pairs as edges
+                # assign edge attributes: downward, peer, upward
+                new_edges = []
+                prob_list = []
+                for edge in edges:
+                    coach1_num = mapping_dict[edge[0]]
+                    coach2_num = mapping_dict[edge[1]]
+
+                    if coach1_num < coach2_num:
+                        direction = 'downward'
+                    elif coach1_num == coach2_num:
+                        direction = 'peer'
+                    elif coach1_num > coach2_num:
+                        direction = 'upward'
+                    
+                    prob = selection_prob_dict[direction]
+                    prob_list.append(prob)
+                    new_edges.append(edge)
+
+                cumulative_g.add_edges_from(new_edges)
+                nx.set_edge_attributes(cumulative_g, name="prob", values=dict(zip(new_edges, prob_list)))
 
     return cumulative_g
 

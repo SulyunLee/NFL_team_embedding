@@ -316,11 +316,11 @@ class Hier_NN(nn.Module):
         self.coordinator_fc = nn.Linear(2*coach_feature_dim, coach_feature_dim)
         self.hc_fc = nn.Linear(4*coach_feature_dim, coach_feature_dim, bias=True)
 
-        if self.feature_set == 2 or self.feature_set == 3:
+        if self.feature_set == 0 or self.feature_set == 1:
+            self.output_fc = nn.Linear(coach_feature_dim + team_feature_dim, output_dim, bias=True)
+        else:
             self.hidden_fc = nn.Linear(coach_feature_dim + team_feature_dim, int(coach_feature_dim/2), bias=True)
             self.output_fc = nn.Linear(int(coach_feature_dim/2), output_dim, bias=True)
-        elif self.feature_set == 0 or self.feature_set == 1:
-            self.output_fc = nn.Linear(coach_feature_dim + team_feature_dim, output_dim, bias=True)
 
     def forward(self, offensive, defensive, special, hc, team_feature):
 
@@ -335,7 +335,7 @@ class Hier_NN(nn.Module):
 
         # concatenate team embedding and team features to output NN layer.
         x = torch.cat([team_emb, team_feature], dim=1)
-        if self.feature_set == 2 or self.feature_set == 3:
+        if self.feature_set != 0 and self.feature_set != 1:
             x = F.relu(self.hidden_fc(x))
         x = self.output_fc(x)
 
