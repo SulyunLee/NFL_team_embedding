@@ -20,17 +20,26 @@ if __name__ == "__main__":
     parser.add_argument('-feature_set', '--feature_set', type=int, help="Feature set number\n(0: Basic features, 1: Basic features + salary, 2: Basic features & node embedding + salary, 3: Basic features & node embedding + salary + diversity)")
     parser.add_argument('-train_split_year', '--train_split_year', type=int, help="Maximum year for training set")
     parser.add_argument('-valid_split_year', '--valid_split_year', type=int, help="Maximum year for validation set")
-    parser.add_argument('-seed', '--seed', default=0, type=int, help="Random seed")
+    parser.add_argument('-collab_type', '--collab_type', default='all', type=str, help="Collaboration type: NFL or all")
+    parser.add_argument('-hier', '--hier', default=False, type=bool, help="Mentorship network or not")
+    parser.add_argument('-biased', '--biased', default=False, type=bool, help="Random walks are biased or not")
+    parser.add_argument('-prob', '--prob', type=int)
+    parser.add_argument('-w', '--w', default=3, type=int, help="window size")
+
 
     args = parser.parse_args()
     feature_set = args.feature_set
     train_split_year = args.train_split_year
     valid_split_year = args.valid_split_year
-    seed = args.seed
+    collab_type = args.collab_type
+    hier = args.hier
+    biased = args.biased
+    prob = args.prob
+    w = args.w
 
     #################################################################
     # Load datasets
-    NFL_coach_record_filename = "../datasets/NFL_Coach_Data_with_features.csv"
+    NFL_coach_record_filename = "../datasets/NFL_Coach_Data_with_features_collab{}_hier{}_biased{}_selectionprob{}_w{}.csv".format(collab_type, hier, biased, prob, w)
     team_labels_filename = "../datasets/team_labels.csv"
     team_salary_filename = "../datasets/Total_Salary.csv"
 
@@ -59,12 +68,18 @@ if __name__ == "__main__":
     elif feature_set == 1:
         coach_feature_names = basic_features
         team_feature_names = ["Salary_Rank"]
-    elif feature_set == 2:
+    elif feature_set == 21:
         coach_feature_names = basic_features + cumul_emb_features
         team_feature_names = ["Salary_Rank"]
-    elif feature_set == 3:
+    elif feature_set == 22:
+        coach_feature_names = basic_features + cumul_emb_features
+        team_feature_names = []
+    elif feature_set == 31:
         coach_feature_names = basic_features + cumul_emb_features
         team_feature_names = ["Salary_Rank", "Max_Emb_Similarity", "Mean_Emb_Similarity"]
+    elif feature_set == 32:
+        coach_feature_names = basic_features + cumul_emb_features
+        team_feature_names = ["Max_Emb_Similarity", "Mean_Emb_Similarity"]
 
     print("Feature set {}".format(feature_set))
 
@@ -120,7 +135,7 @@ if __name__ == "__main__":
     normalized_train_x, normalized_valid_x, normalized_test_x = normalize(train_team_emb, valid_team_emb, test_team_emb)
 
     # team feature
-    if feature_set != 0:
+    if len(team_feature_names) != 0:
         normalized_train_team_feature, normalized_valid_team_feature, normalized_test_team_feature = normalize(train_team_feature, valid_team_feature, test_team_feature)
     else:
         normalized_train_team_feature = normalized_valid_team_feature = normalized_test_team_feature = torch.Tensor()
@@ -136,79 +151,97 @@ if __name__ == "__main__":
     loss = nn.BCEWithLogitsLoss()
     epochs = 100000
 
-    # dictionaries that store average auc and accuracy for each hidden node
-    torch.manual_seed(seed)
-    model = Nonhier_NN(coach_feature_dim=len(coach_feature_names),
-                        team_feature_dim=len(team_feature_names),
-                        output_dim=1,
-                        feature_set=feature_set)
+    repeated_train_loss_arr = np.zeros((11))
+    repeated_valid_loss_arr = np.zeros((11))
+    repeated_test_loss_arr = np.zeros((11))
+    repeated_train_auc_arr = np.zeros((11))
+    repeated_valid_auc_arr = np.zeros((11))
+    repeated_test_auc_arr = np.zeros((11))
+    for seed in range(0,11):
+        torch.manual_seed(seed)
+        model = Nonhier_NN(coach_feature_dim=len(coach_feature_names),
+                            team_feature_dim=len(team_feature_names),
+                            output_dim=1,
+                            feature_set=feature_set)
 
-    # optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    # Early stopping
-    stopper = EarlyStopping(patience=50)
+        # optimizer
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        # Early stopping
+        stopper = EarlyStopping(patience=50)
 
-    train_loss_arr = np.zeros((epochs)) 
-    valid_loss_arr = np.zeros((epochs)) 
-    test_loss_arr = np.zeros((epochs)) 
-    train_auc_arr = np.zeros((epochs)) 
-    valid_auc_arr = np.zeros((epochs)) 
-    test_auc_arr = np.zeros((epochs)) 
+        train_loss_arr = np.zeros((epochs)) 
+        valid_loss_arr = np.zeros((epochs)) 
+        test_loss_arr = np.zeros((epochs)) 
+        train_auc_arr = np.zeros((epochs)) 
+        valid_auc_arr = np.zeros((epochs)) 
+        test_auc_arr = np.zeros((epochs)) 
 
-    for epoch in tqdm(range(epochs)):
-        print("Epoch {}".format(epoch))
-        model.train()
+        for epoch in tqdm(range(epochs)):
+            print("Epoch {}".format(epoch))
+            model.train()
 
-        optimizer.zero_grad()
+            optimizer.zero_grad()
 
-        train_y_hat = model(normalized_train_x, normalized_train_team_feature)
-        train_loss = loss(train_y_hat, train_labels)
-        train_loss_arr[epoch] = train_loss
+            train_y_hat = model(normalized_train_x, normalized_train_team_feature)
+            train_loss = loss(train_y_hat, train_labels)
+            train_loss_arr[epoch] = train_loss
 
-        # get the train predictions
-        train_prob = torch.sigmoid(train_y_hat)
-        train_pred = torch.round(train_prob)
-        train_auc = round(roc_auc_score(train_labels.detach().numpy(), train_prob.detach().numpy()), 3)
-        train_auc_arr[epoch] = train_auc
+            # get the train predictions
+            train_prob = torch.sigmoid(train_y_hat)
+            train_pred = torch.round(train_prob)
+            train_auc = round(roc_auc_score(train_labels.detach().numpy(), train_prob.detach().numpy()), 3)
+            train_auc_arr[epoch] = train_auc
 
-        train_loss.backward()
-        optimizer.step()
-    
-        with torch.no_grad():
-            model.eval()
+            train_loss.backward()
+            optimizer.step()
+        
+            with torch.no_grad():
+                model.eval()
 
-            # predict on the validation set
-            valid_y_hat = model(normalized_valid_x, normalized_valid_team_feature)
-            valid_loss = loss(valid_y_hat, valid_labels)
-            valid_loss_arr[epoch] = valid_loss
+                # predict on the validation set
+                valid_y_hat = model(normalized_valid_x, normalized_valid_team_feature)
+                valid_loss = loss(valid_y_hat, valid_labels)
+                valid_loss_arr[epoch] = valid_loss
 
-            # get the valid predictions
-            valid_prob = torch.sigmoid(valid_y_hat)
-            valid_pred = torch.round(valid_prob)
-            valid_auc = round(roc_auc_score(valid_labels.detach().numpy(), valid_prob.detach().numpy()), 3)
-            valid_auc_arr[epoch] = valid_auc
+                # get the valid predictions
+                valid_prob = torch.sigmoid(valid_y_hat)
+                valid_pred = torch.round(valid_prob)
+                valid_auc = round(roc_auc_score(valid_labels.detach().numpy(), valid_prob.detach().numpy()), 3)
+                valid_auc_arr[epoch] = valid_auc
 
-            # predict on the test set
-            test_y_hat = model(normalized_test_x, normalized_test_team_feature)
-            test_loss = loss(test_y_hat, test_labels)
-            test_loss_arr[epoch] = test_loss
+                # predict on the test set
+                test_y_hat = model(normalized_test_x, normalized_test_team_feature)
+                test_loss = loss(test_y_hat, test_labels)
+                test_loss_arr[epoch] = test_loss
 
-            # get the test predictions
-            test_prob = torch.sigmoid(test_y_hat)
-            test_pred = torch.round(test_prob)
-            test_auc = round(roc_auc_score(test_labels.detach().numpy(), test_prob.detach().numpy()), 3)
-            test_auc_arr[epoch] = test_auc
+                # get the test predictions
+                test_prob = torch.sigmoid(test_y_hat)
+                test_pred = torch.round(test_prob)
+                test_auc = round(roc_auc_score(test_labels.detach().numpy(), test_prob.detach().numpy()), 3)
+                test_auc_arr[epoch] = test_auc
 
-            print("Train Loss: {:.3f}, auc: {:.3f}\nValid Loss: {:.3f}, auc: {:.3f}\nTest Loss: {:.3f}, auc: {:.3f}".format(train_loss,train_auc, valid_loss, valid_auc, test_loss, test_auc))
+                counter, stop = stopper.step(valid_loss, model)
+                if counter == 1:
+                    remember_epoch = epoch - 1
+                if stop:
+                    break
 
-            counter, stop = stopper.step(valid_loss, model)
-            if counter == 1:
-                remember_epoch = epoch - 1
-            if stop:
-                break
+        print("Performance summary (feature set {}, seed {}):".format(feature_set, seed))
+        print("*Stopped at epoch {}".format(remember_epoch))
+        print("Train Loss: {:.3f}, AUC: {:.3f}\nValid Loss: {:.3f}, AUC: {:.3f}\nTest Loss: {:.3f}, AUC: {:.3f}".format(train_loss_arr[remember_epoch], train_auc_arr[remember_epoch], valid_loss_arr[remember_epoch], valid_auc_arr[remember_epoch], test_loss_arr[remember_epoch], test_auc_arr[remember_epoch]))
+        repeated_train_loss_arr[seed] = train_loss_arr[remember_epoch]
+        repeated_valid_loss_arr[seed] = valid_loss_arr[remember_epoch]
+        repeated_test_loss_arr[seed] = test_loss_arr[remember_epoch]
+        repeated_train_auc_arr[seed] = train_auc_arr[remember_epoch]
+        repeated_valid_auc_arr[seed] = valid_auc_arr[remember_epoch]
+        repeated_test_auc_arr[seed] = test_auc_arr[remember_epoch]
 
-    print("Performance summary (feature set {}, seed {}):".format(feature_set, seed))
-    print("*Stopped at epoch {}".format(remember_epoch))
-    print("Train Loss: {:.3f}, AUC: {:.3f}\nValid Loss: {:.3f}, AUC: {:.3f}\nTest Loss: {:.3f}, AUC: {:.3f}".format(train_loss_arr[remember_epoch], train_auc_arr[remember_epoch], valid_loss_arr[remember_epoch], valid_auc_arr[remember_epoch], test_loss_arr[remember_epoch], test_auc_arr[remember_epoch]))
 
+
+    print("** Non-hierarchical FC aggregation **")
+    print("Feature set: {}\nTrain: 2002-{}, Validation: {}-{}, Test: {}-2019\nCollaboration type: {}, Network type: hierarchy {}, Biased random walk: {} (selection prob {})".format(feature_set, train_split_year, train_split_year+1, valid_split_year, valid_split_year+1, collab_type, hier, biased, prob))
+    print("Train Loss: {:.3f}, AUC: {:.3f}\nValid Loss: {:.3f}, AUC: {:.3f}\nTest Loss: {:.3f}, AUC: {:.3f}".format(repeated_train_loss_arr.mean(), repeated_train_auc_arr.mean(), repeated_valid_loss_arr.mean(), repeated_valid_auc_arr.mean(), repeated_test_loss_arr.mean(), repeated_test_auc_arr.mean()))
+
+    for auc in repeated_test_auc_arr:
+        print(auc)
 

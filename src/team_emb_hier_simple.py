@@ -25,6 +25,7 @@ if __name__ == "__main__":
 
     #################################################################
     # Load datasets
+    NFL_coach_record_filename = "../datasets/NFL_Coach_Data_with_features_collaball_hierTrue.csv"
     NFL_coach_record_filename = "../datasets/NFL_Coach_Data_with_features.csv"
     team_labels_filename = "../datasets/team_labels.csv"
     team_salary_filename = "../datasets/Total_Salary.csv"
@@ -33,6 +34,7 @@ if __name__ == "__main__":
     team_labels_df = pd.read_csv(team_labels_filename)
     team_salary_df = pd.read_csv(team_salary_filename)
     #################################################################
+
     # drop seasons with no salary data available
     team_salary_df = team_salary_df.dropna(subset=["Total_Salary"])
     # change team names with "(NFL)" appended
@@ -43,7 +45,9 @@ if __name__ == "__main__":
     basic_features = ["TotalYearsInNFL", "Past5yrsWinningPerc_best", "Past5yrsWinningPerc_avg"]
     cumul_emb_features = NFL_record_df.columns[NFL_record_df.columns.str.contains("cumul_emb")].tolist()
 
+    #################################################################
     # generate team feature set
+    #################################################################
     team_diversity_df = generate_team_diversity_feature(NFL_record_df, cumul_emb_features)
     team_features = team_salary_df.merge(team_diversity_df, how="left", on=["Team", "Year"])
 

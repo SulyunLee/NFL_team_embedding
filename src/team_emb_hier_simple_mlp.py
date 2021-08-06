@@ -27,6 +27,7 @@ if __name__ == "__main__":
 
     #################################################################
     # Load datasets
+    NFL_coach_record_filename = "../datasets/NFL_Coach_Data_with_features_collaball_hierTrue.csv"
     NFL_coach_record_filename = "../datasets/NFL_Coach_Data_with_features.csv"
     team_labels_filename = "../datasets/team_labels.csv"
     team_salary_filename = "../datasets/Total_Salary.csv"
@@ -128,7 +129,7 @@ if __name__ == "__main__":
     test_labels = torch.Tensor(test_labels)
 
     if feature_set == 2 or feature_set == 3:
-        hidden_nodes = [5, 10, 15, 20, 25, 30]
+        hidden_nodes = [5, 10, 15, 20, 25, 30, 35]
     elif feature_set == 0 or feature_set == 1:
         hidden_nodes = [3, 5, 7, 10]
 

@@ -66,7 +66,7 @@ if __name__ == "__main__":
 
     #################################################################
     # Load datasets
-    NFL_coach_record_filename = "../datasets/NFL_Coach_Data_with_features.csv"
+    NFL_coach_record_filename = "../datasets/NFL_Coach_Data_with_features_collaball_hierTrue.csv"
     team_labels_filename = "../datasets/team_labels.csv"
     team_salary_filename = "../datasets/Total_Salary.csv"
 
